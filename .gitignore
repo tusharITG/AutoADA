@@ -1,0 +1,5 @@
+node_modules/
+test-reports/
+reports/
+.DS_Store
+.claude/

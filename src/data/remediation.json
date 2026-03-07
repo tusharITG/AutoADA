@@ -1,0 +1,212 @@
+{
+  "image-alt": {
+    "title": "Images must have alternate text",
+    "before": "<img src=\"/images/team-photo.jpg\">",
+    "after": "<img src=\"/images/team-photo.jpg\" alt=\"Our engineering team at the 2024 company retreat\">",
+    "explanation": "Every <img> element must have an alt attribute that describes the image content. Screen readers announce images using the alt text; without it, users who are blind or have low vision cannot understand the image. For decorative images that convey no information, use an empty alt attribute (alt=\"\") so screen readers skip them entirely.",
+    "effort": "Low (5-10 min per element)"
+  },
+  "label": {
+    "title": "Form elements must have labels",
+    "before": "<input type=\"email\" id=\"user-email\" placeholder=\"Enter your email\">",
+    "after": "<label for=\"user-email\">Email address</label>\n<input type=\"email\" id=\"user-email\" placeholder=\"Enter your email\">",
+    "explanation": "Every form input needs a programmatically associated label so assistive technology can announce what the field is for. A placeholder attribute alone is not sufficient because it disappears when the user starts typing and is not reliably announced by all screen readers. Use a <label> element with a 'for' attribute matching the input's 'id', or wrap the input inside the <label> element.",
+    "effort": "Low (5-10 min per element)"
+  },
+  "button-name": {
+    "title": "Buttons must have discernible text",
+    "before": "<button class=\"btn-close\"><i class=\"icon-x\"></i></button>",
+    "after": "<button class=\"btn-close\" aria-label=\"Close dialog\"><i class=\"icon-x\" aria-hidden=\"true\"></i></button>",
+    "explanation": "Buttons must have text content or an accessible name that describes their purpose. When a button contains only an icon or image with no text, screen reader users hear only 'button' with no indication of what it does. Add visible text, an aria-label attribute, or an aria-labelledby reference to provide a meaningful name.",
+    "effort": "Low (5-10 min per element)"
+  },
+  "link-name": {
+    "title": "Links must have discernible text",
+    "before": "<a href=\"/reports/q4-2024.pdf\"><i class=\"icon-download\"></i></a>",
+    "after": "<a href=\"/reports/q4-2024.pdf\"><i class=\"icon-download\" aria-hidden=\"true\"></i> Download Q4 2024 Report (PDF)</a>",
+    "explanation": "Every link must have text content or an accessible name that describes its destination or purpose. Links with no discernible text are announced as just 'link' by screen readers, leaving users unable to determine where the link goes. Add visible link text, an aria-label, or include descriptive text inside the anchor element.",
+    "effort": "Low (5-10 min per element)"
+  },
+  "color-contrast": {
+    "title": "Elements must have sufficient color contrast",
+    "before": "<p style=\"color: #999999; background-color: #ffffff;\">Important notice about your account</p>",
+    "after": "<p style=\"color: #595959; background-color: #ffffff;\">Important notice about your account</p>",
+    "explanation": "Text must have a contrast ratio of at least 4.5:1 against its background for normal text, and 3:1 for large text (18pt or 14pt bold). Insufficient contrast makes text difficult or impossible to read for users with low vision or color vision deficiencies. Adjust either the text color or background color until the ratio meets WCAG AA requirements. Use a contrast checker tool to verify.",
+    "effort": "Medium (15-30 min)"
+  },
+  "html-has-lang": {
+    "title": "The <html> element must have a lang attribute",
+    "before": "<html>\n  <head><title>My Website</title></head>\n  <body>...</body>\n</html>",
+    "after": "<html lang=\"en\">\n  <head><title>My Website</title></head>\n  <body>...</body>\n</html>",
+    "explanation": "The <html> element must have a valid lang attribute so screen readers can determine the correct pronunciation rules and browsers can render the page appropriately. Without it, assistive technology may use the wrong language profile, making content unintelligible. Set the lang attribute to the primary language of the page using a valid BCP 47 language tag (e.g., 'en', 'es', 'fr', 'zh').",
+    "effort": "Low (5-10 min per element)"
+  },
+  "document-title": {
+    "title": "Documents must have a <title> element",
+    "before": "<head>\n  <meta charset=\"UTF-8\">\n  <link rel=\"stylesheet\" href=\"styles.css\">\n</head>",
+    "after": "<head>\n  <meta charset=\"UTF-8\">\n  <title>Account Settings - MyApp</title>\n  <link rel=\"stylesheet\" href=\"styles.css\">\n</head>",
+    "explanation": "Every HTML document must have a non-empty <title> element inside the <head>. The title is the first thing announced by screen readers when a page loads, and it appears in browser tabs and bookmarks. It helps users understand what page they are on, especially when navigating between multiple tabs. Use a descriptive, unique title that identifies the page content and, optionally, the site name.",
+    "effort": "Low (5-10 min per element)"
+  },
+  "meta-viewport": {
+    "title": "Zooming and scaling must not be disabled",
+    "before": "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no\">",
+    "after": "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">",
+    "explanation": "The viewport meta tag must not disable user scaling or set a maximum-scale value less than 2. Users with low vision rely on pinch-to-zoom to enlarge content on mobile devices. Setting user-scalable=no or maximum-scale=1.0 prevents this, making the page unusable for these users. Remove the user-scalable=no and maximum-scale restrictions, or set maximum-scale to at least 5.",
+    "effort": "Low (5-10 min per element)"
+  },
+  "heading-order": {
+    "title": "Heading levels should increase by one",
+    "before": "<h1>Dashboard</h1>\n<h3>Recent Activity</h3>\n<h5>Today's Transactions</h5>",
+    "after": "<h1>Dashboard</h1>\n<h2>Recent Activity</h2>\n<h3>Today's Transactions</h3>",
+    "explanation": "Heading levels should only increase by one level at a time (h1 followed by h2, not h1 followed by h3). Skipping heading levels creates a confusing document outline for screen reader users who navigate by headings. This does not mean you cannot go from h3 back to h2 (starting a new section), only that you should not skip levels when going deeper. Adjust heading tags to form a logical, sequential hierarchy.",
+    "effort": "Low (5-10 min per element)"
+  },
+  "list": {
+    "title": "Lists must be structured correctly",
+    "before": "<ul>\n  <li>Home</li>\n  <div>About Us</div>\n  <li>Contact</li>\n</ul>",
+    "after": "<ul>\n  <li>Home</li>\n  <li>About Us</li>\n  <li>Contact</li>\n</ul>",
+    "explanation": "List elements (<ul> and <ol>) must only contain <li>, <script>, or <template> elements as direct children. Non-list-item elements inserted directly inside a list break the semantic structure that assistive technology relies on to announce list length and allow navigation between items. Move non-<li> content inside <li> elements or restructure the markup.",
+    "effort": "Low (5-10 min per element)"
+  },
+  "listitem": {
+    "title": "List items must be contained within a list parent",
+    "before": "<div class=\"nav-items\">\n  <li><a href=\"/home\">Home</a></li>\n  <li><a href=\"/about\">About</a></li>\n</div>",
+    "after": "<ul class=\"nav-items\">\n  <li><a href=\"/home\">Home</a></li>\n  <li><a href=\"/about\">About</a></li>\n</ul>",
+    "explanation": "Every <li> element must be a direct child of a <ul>, <ol>, or <menu> element. When list items appear outside of a proper list container, screen readers cannot determine they are part of a list and will not announce list context (like 'list, 3 items'). Wrap orphaned <li> elements in the appropriate list element.",
+    "effort": "Low (5-10 min per element)"
+  },
+  "aria-required-attr": {
+    "title": "ARIA roles must have all required attributes",
+    "before": "<div role=\"checkbox\" tabindex=\"0\">Subscribe to newsletter</div>",
+    "after": "<div role=\"checkbox\" tabindex=\"0\" aria-checked=\"false\">Subscribe to newsletter</div>",
+    "explanation": "Elements with ARIA roles must include all attributes required by that role. For example, the 'checkbox' role requires aria-checked, the 'slider' role requires aria-valuenow, aria-valuemin, and aria-valuemax. Missing required attributes mean assistive technology cannot convey the full state of the element to users. Consult the WAI-ARIA specification for the required attributes of each role.",
+    "effort": "Low (5-10 min per element)"
+  },
+  "aria-valid-attr": {
+    "title": "ARIA attributes must be valid",
+    "before": "<button aria-describedby=\"tip1\" aria-modal=\"yes\" aria-pressed=\"false\">Toggle</button>",
+    "after": "<button aria-describedby=\"tip1\" aria-pressed=\"false\">Toggle</button>",
+    "explanation": "All ARIA attributes used on an element must be valid ARIA attributes as defined in the WAI-ARIA specification. Misspelled attributes (e.g., aria-labelled instead of aria-labelledby) or invented attributes (e.g., aria-modal on a button) are ignored by assistive technology, which means the intended semantic information is lost. Remove invalid ARIA attributes or replace them with the correct ones.",
+    "effort": "Low (5-10 min per element)"
+  },
+  "aria-allowed-attr": {
+    "title": "ARIA attributes must be allowed for the element's role",
+    "before": "<button aria-level=\"3\" aria-pressed=\"false\">Bold</button>",
+    "after": "<button aria-pressed=\"false\">Bold</button>",
+    "explanation": "ARIA attributes must be appropriate for the role of the element they are applied to. For example, aria-level is valid for headings but not for buttons. Using an ARIA attribute that is not permitted for a given role can produce unexpected behavior in assistive technology or cause the attribute to be ignored entirely. Remove disallowed ARIA attributes or restructure the element's role.",
+    "effort": "Low (5-10 min per element)"
+  },
+  "aria-hidden-focus": {
+    "title": "aria-hidden elements must not contain focusable elements",
+    "before": "<div aria-hidden=\"true\">\n  <p>This content is visually hidden.</p>\n  <button onclick=\"doSomething()\">Click me</button>\n</div>",
+    "after": "<div aria-hidden=\"true\">\n  <p>This content is visually hidden.</p>\n  <button onclick=\"doSomething()\" tabindex=\"-1\">Click me</button>\n</div>",
+    "explanation": "Elements with aria-hidden='true' are removed from the accessibility tree, but focusable elements inside them can still receive keyboard focus. This creates a confusing experience where a keyboard user tabs to an element that the screen reader cannot see or announce. Either remove focusable elements from the aria-hidden container, add tabindex='-1' to prevent them from receiving focus, or reconsider whether aria-hidden is appropriate.",
+    "effort": "Medium (15-30 min)"
+  },
+  "aria-roles": {
+    "title": "ARIA roles must be valid",
+    "before": "<nav role=\"nagivation\">\n  <a href=\"/home\">Home</a>\n  <a href=\"/about\">About</a>\n</nav>",
+    "after": "<nav role=\"navigation\">\n  <a href=\"/home\">Home</a>\n  <a href=\"/about\">About</a>\n</nav>",
+    "explanation": "The role attribute must use a valid value from the WAI-ARIA specification. Misspelled or invented roles (e.g., 'nagivation' instead of 'navigation') are ignored by assistive technology, so the element loses its intended semantic meaning. Correct the typo or use a valid ARIA role. In many cases, using the correct native HTML element (like <nav>) makes an explicit role attribute unnecessary.",
+    "effort": "Low (5-10 min per element)"
+  },
+  "input-image-alt": {
+    "title": "Image buttons must have alternate text",
+    "before": "<input type=\"image\" src=\"/icons/search-icon.png\">",
+    "after": "<input type=\"image\" src=\"/icons/search-icon.png\" alt=\"Search\">",
+    "explanation": "Input elements with type='image' function as submit buttons and must have an alt attribute that describes the button's action. Without alt text, screen readers will announce the file name of the image, which is usually meaningless. Provide a concise alt value that describes what happens when the button is activated, such as 'Search' or 'Submit order'.",
+    "effort": "Low (5-10 min per element)"
+  },
+  "select-name": {
+    "title": "Select elements must have an accessible name",
+    "before": "<select id=\"country\">\n  <option value=\"\">Choose a country</option>\n  <option value=\"us\">United States</option>\n  <option value=\"uk\">United Kingdom</option>\n</select>",
+    "after": "<label for=\"country\">Country</label>\n<select id=\"country\">\n  <option value=\"\">Choose a country</option>\n  <option value=\"us\">United States</option>\n  <option value=\"uk\">United Kingdom</option>\n</select>",
+    "explanation": "Every <select> element must have an accessible name, typically provided by an associated <label> element. Without a label, screen reader users cannot determine what the dropdown is for. The first <option> acting as placeholder text is not a substitute for a proper label. Use a <label> with a 'for' attribute, wrap the select in a <label>, or use aria-label or aria-labelledby.",
+    "effort": "Low (5-10 min per element)"
+  },
+  "td-headers-attr": {
+    "title": "Table cells that use the headers attribute must refer to valid header cells",
+    "before": "<table>\n  <tr><th id=\"name\">Name</th><th id=\"role\">Role</th></tr>\n  <tr><td headers=\"name\">Alice</td><td headers=\"title\">Engineer</td></tr>\n</table>",
+    "after": "<table>\n  <tr><th id=\"name\">Name</th><th id=\"role\">Role</th></tr>\n  <tr><td headers=\"name\">Alice</td><td headers=\"role\">Engineer</td></tr>\n</table>",
+    "explanation": "When data cells use the headers attribute to associate themselves with header cells, every ID listed in the headers attribute must correspond to an actual <th> element in the same table. Broken references mean assistive technology cannot announce the correct column or row header when the user navigates to that cell. Verify that all header IDs exist and are spelled correctly.",
+    "effort": "Medium (15-30 min)"
+  },
+  "th-has-data-cells": {
+    "title": "Table header cells must be associated with data cells",
+    "before": "<table>\n  <tr><th>Q1 Revenue</th><th>Q2 Revenue</th></tr>\n  <tr><th>Q3 Revenue</th><th>Q4 Revenue</th></tr>\n</table>",
+    "after": "<table>\n  <tr><th>Quarter</th><th>Revenue</th></tr>\n  <tr><td>Q1</td><td>$1.2M</td></tr>\n  <tr><td>Q2</td><td>$1.5M</td></tr>\n</table>",
+    "explanation": "Every <th> (table header) element must be associated with at least one <td> (data cell) element. A table consisting entirely of <th> elements or containing headers with no corresponding data cells confuses assistive technology and provides no meaningful structure. Restructure the table so that header cells label actual data cells, or convert cells that are not true headers to <td> elements.",
+    "effort": "Medium (15-30 min)"
+  },
+  "duplicate-id": {
+    "title": "ID attribute values must be unique",
+    "before": "<label for=\"email\">Email</label>\n<input type=\"email\" id=\"email\">\n\n<label for=\"email\">Confirm Email</label>\n<input type=\"email\" id=\"email\">",
+    "after": "<label for=\"email\">Email</label>\n<input type=\"email\" id=\"email\">\n\n<label for=\"email-confirm\">Confirm Email</label>\n<input type=\"email\" id=\"email-confirm\">",
+    "explanation": "Every id attribute value must be unique within a page. Duplicate IDs break label associations (the label will only bind to the first element with that ID), ARIA references (aria-labelledby, aria-describedby), and fragment link navigation. They can also cause unpredictable behavior in JavaScript. Audit the page for duplicate IDs and assign unique values to each element.",
+    "effort": "Medium (15-30 min)"
+  },
+  "frame-title": {
+    "title": "Frames and iframes must have a title attribute",
+    "before": "<iframe src=\"https://www.youtube.com/embed/abc123\"></iframe>",
+    "after": "<iframe src=\"https://www.youtube.com/embed/abc123\" title=\"Product demo video - Getting started with MyApp\"></iframe>",
+    "explanation": "Every <iframe> and <frame> element must have a title attribute that describes its content. Screen reader users rely on the frame title to decide whether to enter the frame or skip past it. Without a title, the user hears only 'frame' with no indication of what is inside. Provide a concise, descriptive title that reflects the frame's content or purpose.",
+    "effort": "Low (5-10 min per element)"
+  },
+  "video-caption": {
+    "title": "Video elements must have captions",
+    "before": "<video controls src=\"/media/product-tour.mp4\">\n  Your browser does not support the video tag.\n</video>",
+    "after": "<video controls src=\"/media/product-tour.mp4\">\n  <track kind=\"captions\" src=\"/media/product-tour.vtt\" srclang=\"en\" label=\"English captions\" default>\n  Your browser does not support the video tag.\n</video>",
+    "explanation": "Video content with audio must have synchronized captions so that users who are deaf or hard of hearing can access the spoken content. Add a <track> element with kind='captions' pointing to a WebVTT (.vtt) or other supported caption file. Captions should include all dialogue, speaker identification, and relevant sound effects.",
+    "effort": "High (1-2 hours)"
+  },
+  "audio-caption": {
+    "title": "Audio elements must have captions or a transcript",
+    "before": "<audio controls src=\"/media/quarterly-earnings-call.mp3\">\n  Your browser does not support the audio tag.\n</audio>",
+    "after": "<audio controls src=\"/media/quarterly-earnings-call.mp3\">\n  <track kind=\"captions\" src=\"/media/quarterly-earnings-call.vtt\" srclang=\"en\" label=\"English captions\">\n  Your browser does not support the audio tag.\n</audio>\n<a href=\"/media/quarterly-earnings-call-transcript.html\">Read the full transcript</a>",
+    "explanation": "Audio content must provide captions or a text transcript so that users who are deaf or hard of hearing can access the information. Provide either a synchronized caption track or a link to a full text transcript adjacent to the audio player. The transcript should include all spoken content and identify different speakers.",
+    "effort": "High (1-2 hours)"
+  },
+  "bypass": {
+    "title": "Pages must provide a mechanism to bypass repeated content",
+    "before": "<body>\n  <nav>\n    <a href=\"/home\">Home</a>\n    <a href=\"/products\">Products</a>\n    <a href=\"/about\">About</a>\n    <a href=\"/contact\">Contact</a>\n  </nav>\n  <main>\n    <h1>Welcome</h1>\n  </main>\n</body>",
+    "after": "<body>\n  <a href=\"#main-content\" class=\"skip-link\">Skip to main content</a>\n  <nav>\n    <a href=\"/home\">Home</a>\n    <a href=\"/products\">Products</a>\n    <a href=\"/about\">About</a>\n    <a href=\"/contact\">Contact</a>\n  </nav>\n  <main id=\"main-content\">\n    <h1>Welcome</h1>\n  </main>\n</body>",
+    "explanation": "Pages must include a mechanism, typically a 'Skip to main content' link, that allows keyboard and screen reader users to bypass repetitive navigation blocks that appear on every page. Without this, users must tab through every navigation link on every page load before reaching the main content. The skip link should be the first focusable element on the page and should become visible when focused.",
+    "effort": "Medium (15-30 min)"
+  },
+  "tabindex": {
+    "title": "Elements should not have a tabindex value greater than 0",
+    "before": "<input type=\"text\" id=\"search\" tabindex=\"5\">\n<button tabindex=\"10\">Search</button>\n<a href=\"/help\" tabindex=\"15\">Help</a>",
+    "after": "<input type=\"text\" id=\"search\">\n<button>Search</button>\n<a href=\"/help\">Help</a>",
+    "explanation": "A tabindex value greater than 0 forces an element to the front of the tab order, overriding the natural document flow and making keyboard navigation unpredictable. Users expect to tab through elements in the order they appear on the page. Remove positive tabindex values and rely on the DOM order to determine tab sequence. Use tabindex='0' only when you need to make a non-interactive element focusable, and tabindex='-1' to allow programmatic focus without tab access.",
+    "effort": "Low (5-10 min per element)"
+  },
+  "landmark-one-main": {
+    "title": "Pages must have exactly one main landmark",
+    "before": "<body>\n  <div class=\"header\">Site Header</div>\n  <div class=\"content\">\n    <h1>Page Title</h1>\n    <p>Page content here.</p>\n  </div>\n  <div class=\"footer\">Site Footer</div>\n</body>",
+    "after": "<body>\n  <header>Site Header</header>\n  <main>\n    <h1>Page Title</h1>\n    <p>Page content here.</p>\n  </main>\n  <footer>Site Footer</footer>\n</body>",
+    "explanation": "Each page must contain exactly one <main> element (or an element with role='main') that wraps the primary content. The main landmark allows screen reader users to jump directly to the core content, bypassing headers, navigation, and sidebars. Without it, users have no reliable way to locate the primary content area. Wrap your main content in a <main> element and ensure there is only one per page.",
+    "effort": "Low (5-10 min per element)"
+  },
+  "region": {
+    "title": "All page content must be contained within landmarks",
+    "before": "<body>\n  <header><nav>...</nav></header>\n  <div class=\"promo-banner\">\n    <p>Spring sale: 20% off everything!</p>\n  </div>\n  <main>...</main>\n  <footer>...</footer>\n</body>",
+    "after": "<body>\n  <header><nav>...</nav></header>\n  <aside aria-label=\"Promotional banner\">\n    <p>Spring sale: 20% off everything!</p>\n  </aside>\n  <main>...</main>\n  <footer>...</footer>\n</body>",
+    "explanation": "All visible content on a page should be enclosed within a landmark region (<header>, <nav>, <main>, <aside>, <footer>, or elements with appropriate landmark roles). Content outside landmarks is difficult for screen reader users to discover because landmark navigation is one of the primary ways they orient themselves on a page. Move orphaned content into an existing landmark or wrap it in an appropriate landmark element.",
+    "effort": "Medium (15-30 min)"
+  },
+  "empty-heading": {
+    "title": "Headings must not be empty",
+    "before": "<h2 class=\"section-title\"></h2>\n<div class=\"card-grid\">...</div>",
+    "after": "<h2 class=\"section-title\">Featured Products</h2>\n<div class=\"card-grid\">...</div>",
+    "explanation": "Heading elements (h1 through h6) must contain text content or an accessible name. Empty headings are announced by screen readers as blank headings, which is confusing and disrupts navigation. If the heading is meant to be visually hidden, add text and use a CSS class to visually hide it while keeping it accessible. If the heading is unnecessary, remove it entirely rather than leaving it empty.",
+    "effort": "Low (5-10 min per element)"
+  },
+  "form-field-multiple-labels": {
+    "title": "Form fields should not have multiple labels",
+    "before": "<label for=\"phone\">Phone number</label>\n<label for=\"phone\">Please include area code</label>\n<input type=\"tel\" id=\"phone\">",
+    "after": "<label for=\"phone\">Phone number (please include area code)</label>\n<input type=\"tel\" id=\"phone\">",
+    "explanation": "A form field should have only one associated <label> element. When multiple labels reference the same input via the 'for' attribute, assistive technology may only announce one of them or behave unpredictably. Consolidate the label text into a single <label> element. If you need to provide supplementary instructions, use aria-describedby to link a hint paragraph to the input instead of adding a second label.",
+    "effort": "Low (5-10 min per element)"
+  }
+}

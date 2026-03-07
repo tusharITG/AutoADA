@@ -1,0 +1,242 @@
+/**
+ * Compliance score calculation + benchmark context.
+ */
+
+const benchmarks = require('./data/benchmarks.json');
+
+// axe-core category tags → WCAG principle mapping
+const CATEGORY_TO_PRINCIPLE = {
+  'cat.text-alternatives': 'Perceivable',
+  'cat.time-and-media': 'Perceivable',
+  'cat.adaptable': 'Perceivable',
+  'cat.distinguishable': 'Perceivable',
+  'cat.color': 'Perceivable',
+  'cat.sensory-and-visual-cues': 'Perceivable',
+  'cat.keyboard': 'Operable',
+  'cat.time-and-media': 'Operable',
+  'cat.seizures': 'Operable',
+  'cat.navigation': 'Operable',
+  'cat.readable': 'Understandable',
+  'cat.predictable': 'Understandable',
+  'cat.input-assistance': 'Understandable',
+  'cat.forms': 'Understandable',
+  'cat.parsing': 'Robust',
+  'cat.compatible': 'Robust',
+  'cat.name-role-value': 'Robust',
+  'cat.structure': 'Robust',
+  'cat.semantics': 'Robust',
+  'cat.aria': 'Robust',
+  'cat.language': 'Understandable',
+  'cat.tables': 'Perceivable',
+};
+
+const SEVERITY_WEIGHTS = {
+  critical: 10,
+  serious: 5,
+  moderate: 2,
+  minor: 1,
+};
+
+/**
+ * Calculate overall compliance score (0-100).
+ *
+ * Uses a blended approach:
+ * - Base: pass rate (passes / (passes + violations)) × 100
+ * - Penalty: weighted severity deduction scaled logarithmically to prevent
+ *   a handful of repeated violations from cratering the score
+ *
+ * This ensures a site with 36 passes and 4 violation rules doesn't score 0.
+ */
+function calculateOverallScore(violations, passes) {
+  const totalViolationRules = violations.length;
+  const totalPassRules = (passes || []).length;
+  const totalRules = totalViolationRules + totalPassRules;
+
+  if (totalRules === 0) return 100;
+
+  // Base score from pass rate
+  const passRate = totalPassRules / totalRules;
+  const baseScore = passRate * 100;
+
+  // Severity penalty (logarithmically scaled to avoid runaway deductions)
+  let rawPenalty = 0;
+  for (const v of violations) {
+    const severity = v.impact || 'minor';
+    const weight = SEVERITY_WEIGHTS[severity] || 1;
+    const nodeCount = v.nodes ? v.nodes.length : 1;
+    // Log scale: first instance counts full, additional instances have diminishing impact
+    rawPenalty += weight * (1 + Math.log2(nodeCount));
+  }
+
+  // Scale penalty relative to total rules checked (more rules = more tolerance)
+  const scaledPenalty = Math.min(baseScore, (rawPenalty / totalRules) * 25);
+
+  return Math.max(0, Math.min(100, Math.round(baseScore - scaledPenalty)));
+}
+
+/**
+ * Get severity breakdown counts.
+ */
+function getSeverityBreakdown(violations) {
+  const counts = { critical: 0, serious: 0, moderate: 0, minor: 0 };
+
+  for (const v of violations) {
+    for (const node of (v.nodes || [])) {
+      const impact = node.impact || v.impact || 'minor';
+      if (counts.hasOwnProperty(impact)) {
+        counts[impact]++;
+      }
+    }
+  }
+
+  return counts;
+}
+
+/**
+ * Calculate per-WCAG-principle scores.
+ * Groups violations and passes by principle, calculates pass rate.
+ */
+function calculatePrincipleScores(violations, passes) {
+  const principles = {
+    Perceivable: { violations: 0, passes: 0 },
+    Operable: { violations: 0, passes: 0 },
+    Understandable: { violations: 0, passes: 0 },
+    Robust: { violations: 0, passes: 0 },
+  };
+
+  // Count violations per principle
+  for (const v of violations) {
+    const principle = getPrinciple(v.tags);
+    if (principle && principles[principle]) {
+      principles[principle].violations += v.nodes ? v.nodes.length : 1;
+    }
+  }
+
+  // Count passes per principle
+  for (const p of passes) {
+    const principle = getPrinciple(p.tags);
+    if (principle && principles[principle]) {
+      principles[principle].passes += p.nodes ? p.nodes.length : 1;
+    }
+  }
+
+  // Calculate scores
+  const result = {};
+  for (const [name, data] of Object.entries(principles)) {
+    const total = data.violations + data.passes;
+    const score = total > 0 ? Math.round((data.passes / total) * 100) : 100;
+    let status = 'Good';
+    if (score < 50) status = 'Critical';
+    else if (score < 75) status = 'Needs Work';
+
+    result[name] = {
+      score,
+      status,
+      violations: data.violations,
+      passes: data.passes,
+      total,
+    };
+  }
+
+  return result;
+}
+
+/**
+ * Determine which WCAG principle a rule belongs to based on its tags.
+ */
+function getPrinciple(tags) {
+  if (!tags) return 'Robust'; // Default fallback
+
+  for (const tag of tags) {
+    if (CATEGORY_TO_PRINCIPLE[tag]) {
+      return CATEGORY_TO_PRINCIPLE[tag];
+    }
+  }
+
+  // Try to infer from wcag criteria number (1.x = Perceivable, 2.x = Operable, 3.x = Understandable, 4.x = Robust)
+  for (const tag of tags) {
+    const match = tag.match(/^wcag(\d)/);
+    if (match) {
+      const principle = parseInt(match[1]);
+      if (principle === 1) return 'Perceivable';
+      if (principle === 2) return 'Operable';
+      if (principle === 3) return 'Understandable';
+      if (principle === 4) return 'Robust';
+    }
+  }
+
+  return 'Robust'; // Default
+}
+
+/**
+ * Generate benchmark interpretation text.
+ */
+function getBenchmarkContext(score, industry) {
+  const avg = benchmarks.overall_average;
+  const industryScore = industry ? benchmarks.by_industry[industry.toLowerCase()] : null;
+  const compareTarget = industryScore || avg;
+  const compareName = industryScore ? `the ${industry} industry average` : 'the overall industry average';
+
+  const position = score >= compareTarget ? 'above' : 'below';
+  const diff = Math.abs(score - compareTarget);
+
+  // Find interpretation range
+  let interpretation = '';
+  for (const [range, data] of Object.entries(benchmarks.interpretation)) {
+    const [low, high] = range.split('-').map(Number);
+    if (score >= low && score <= high) {
+      interpretation = data.description;
+      break;
+    }
+  }
+
+  // Find what the label/status is
+  let label = '';
+  for (const [range, data] of Object.entries(benchmarks.interpretation)) {
+    const [low, high] = range.split('-').map(Number);
+    if (score >= low && score <= high) {
+      label = data.label;
+      break;
+    }
+  }
+
+  return {
+    score,
+    label,
+    industryAverage: compareTarget,
+    position,
+    difference: diff,
+    compareName,
+    interpretation,
+    summary: `Your score of ${score}/100 is ${diff} points ${position} ${compareName} of ${compareTarget}/100. ${interpretation}`,
+  };
+}
+
+/**
+ * Calculate all scores for a scan result.
+ *
+ * @param {object} scanResult - Full scan result from scanner
+ * @param {string} [industry] - Industry category for benchmark comparison
+ * @returns {object} Scores object
+ */
+function calculateScores(scanResult, industry) {
+  const violations = scanResult.allViolations || scanResult.violations || [];
+  const passes = scanResult.allPasses || scanResult.passes || [];
+
+  const overall = calculateOverallScore(violations, passes);
+  const severityBreakdown = getSeverityBreakdown(violations);
+  const byPrinciple = calculatePrincipleScores(violations, passes);
+  const benchmarkContext = getBenchmarkContext(overall, industry);
+
+  return {
+    overall,
+    severityBreakdown,
+    byPrinciple,
+    benchmarkContext,
+    totalViolations: violations.length,
+    totalViolationNodes: Object.values(severityBreakdown).reduce((a, b) => a + b, 0),
+    totalPasses: passes.length,
+  };
+}
+
+module.exports = { calculateScores };

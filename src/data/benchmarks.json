@@ -1,0 +1,62 @@
+{
+  "overall_average": 34,
+  "source": "Based on WebAIM Million annual analysis and industry accessibility studies",
+  "last_updated": "2025",
+  "methodology_note": "Scores represent an approximate 0-100 accessibility scale derived from automated testing of homepages. Automated tools typically catch only 30-40% of all accessibility issues, so real-world accessibility may be lower than indicated.",
+  "by_industry": {
+    "ecommerce": 30,
+    "saas": 38,
+    "media": 28,
+    "healthcare": 32,
+    "education": 36,
+    "government": 42,
+    "finance": 35,
+    "nonprofit": 33,
+    "technology": 40,
+    "retail": 29
+  },
+  "interpretation": {
+    "0-19": {
+      "label": "Critical — Significant Barriers",
+      "description": "The website has severe accessibility barriers that likely prevent many users with disabilities from accessing content. Immediate remediation is strongly recommended.",
+      "improvement_note": "Focus on fixing critical and serious violations first — addressing the top 5 issues could improve the score by 20-30 points."
+    },
+    "20-39": {
+      "label": "Poor — Below Industry Average",
+      "description": "The website falls in the range where most sites on the web currently sit. While some basic accessibility may be in place, numerous barriers remain that make the site difficult or impossible to use for people relying on assistive technologies.",
+      "improvement_note": "Prioritize WCAG Level A violations such as missing alt text, unlabeled form controls, and insufficient color contrast. Fixing these foundational issues can raise the score into the 40-60 range."
+    },
+    "40-59": {
+      "label": "Fair — Emerging Accessibility",
+      "description": "The website demonstrates some commitment to accessibility and exceeds the current industry average. Core content is partially accessible, but gaps remain that create friction for users with disabilities, particularly for complex interactions like forms, navigation menus, and dynamic content.",
+      "improvement_note": "Move beyond automated fixes and begin manual testing with screen readers and keyboard-only navigation. Address WCAG Level AA criteria such as focus management, heading hierarchy, and ARIA usage to reach the next tier."
+    },
+    "60-79": {
+      "label": "Good — Solid Foundation",
+      "description": "The website is meaningfully more accessible than the vast majority of sites on the web. Most content and core functionality are usable with assistive technologies, though some secondary flows or edge cases may still present challenges.",
+      "improvement_note": "Conduct usability testing with people who have disabilities. Focus on complex components — modals, carousels, data tables, and single-page application navigation — to close remaining gaps."
+    },
+    "80-100": {
+      "label": "Excellent — Strong Accessibility",
+      "description": "The website demonstrates a strong, sustained commitment to digital accessibility. Content and functionality are broadly usable across a wide range of assistive technologies and user needs. This level of conformance places the site well ahead of nearly all peers.",
+      "improvement_note": "Maintain accessibility through continuous monitoring, regression testing in CI/CD pipelines, and periodic audits. Consider pursuing WCAG Level AAA criteria where feasible and publishing a public accessibility statement."
+    }
+  },
+  "common_issues": {
+    "most_common": "Low contrast text (found on 83% of homepages)",
+    "second_common": "Missing alternative text for images (found on 55% of homepages)",
+    "third_common": "Missing form input labels (found on 46% of homepages)",
+    "fourth_common": "Empty links with no discernible text (found on 44% of homepages)",
+    "fifth_common": "Empty buttons with no accessible name (found on 27% of homepages)",
+    "sixth_common": "Missing document language attribute (found on 17% of homepages)"
+  },
+  "percentile_thresholds": {
+    "top_1_percent": 82,
+    "top_5_percent": 68,
+    "top_10_percent": 55,
+    "top_25_percent": 42,
+    "median": 34,
+    "bottom_25_percent": 22,
+    "bottom_10_percent": 14
+  }
+}

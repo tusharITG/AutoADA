@@ -9,10 +9,14 @@
  * - Smarter popup dismissal: verifies parent is modal/overlay before clicking
  */
 
-const puppeteer = require('puppeteer');
+const puppeteer = require('puppeteer-extra');
+const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 const { AxePuppeteer } = require('@axe-core/puppeteer');
 const { captureAnnotatedScreenshot } = require('./screenshotter');
 const { applyConfidenceScores } = require('./confidence');
+
+// Enable stealth mode to bypass bot detection (Cloudflare, etc.)
+puppeteer.use(StealthPlugin());
 
 // Resource types to block during scanning (keeps scripts + stylesheets for axe-core)
 const BLOCKED_RESOURCE_TYPES = new Set([
@@ -117,10 +121,13 @@ async function loadPageDefensively(page, url, timeout = 30000) {
     timeout,
   });
 
-  // Step 2: Stable delay for JS framework hydration
+  // Step 2: Detect and wait for Cloudflare/bot challenge pages
+  await waitForChallengeResolution(page);
+
+  // Step 3: Stable delay for JS framework hydration
   await new Promise((r) => setTimeout(r, 2000));
 
-  // Step 3: Wait for key content selectors (best-effort, short timeout)
+  // Step 4: Wait for key content selectors (best-effort, short timeout)
   try {
     await page.waitForSelector('body:not(:empty)', { timeout: 3000 });
   } catch {
@@ -133,12 +140,61 @@ async function loadPageDefensively(page, url, timeout = 30000) {
     // No main content landmark — that's fine, not all pages have one
   }
 
-  // Step 4: Best-effort network idle (don't fail if it never settles)
+  // Step 5: Best-effort network idle (don't fail if it never settles)
   try {
     await page.waitForNetworkIdle({ idleTime: 500, timeout: 5000 });
   } catch {
     // Network never went idle — proceed anyway (common for ecommerce/SPA sites)
   }
+}
+
+/**
+ * Detect Cloudflare/bot challenge pages and wait for them to resolve.
+ * Cloudflare typically shows "Just a moment..." and auto-redirects once
+ * the JS challenge passes. With the stealth plugin, this usually resolves
+ * within 5-10 seconds.
+ */
+async function waitForChallengeResolution(page, maxWaitMs = 15000) {
+  const isChallengePage = async () => {
+    try {
+      return await page.evaluate(() => {
+        const title = document.title.toLowerCase();
+        // Cloudflare challenge indicators
+        if (title.includes('just a moment') || title.includes('attention required')) return true;
+        // Cloudflare Turnstile / challenge iframe
+        if (document.querySelector('#challenge-running, #challenge-form, .cf-browser-verification')) return true;
+        // Meta refresh pointing to a challenge
+        const metaRefresh = document.querySelector('meta[http-equiv="refresh"]');
+        if (metaRefresh) {
+          const content = metaRefresh.getAttribute('content') || '';
+          if (content.includes('challenge') || content.includes('cdn-cgi')) return true;
+        }
+        return false;
+      });
+    } catch {
+      return false;
+    }
+  };
+
+  if (!(await isChallengePage())) return;
+
+  console.log('    [cloudflare] Challenge detected, waiting for resolution...');
+  const start = Date.now();
+
+  while (Date.now() - start < maxWaitMs) {
+    await new Promise((r) => setTimeout(r, 2000));
+
+    // Check if we navigated away from the challenge
+    if (!(await isChallengePage())) {
+      const elapsed = ((Date.now() - start) / 1000).toFixed(1);
+      console.log(`    [cloudflare] Challenge resolved in ${elapsed}s`);
+      // Give the real page a moment to render
+      await new Promise((r) => setTimeout(r, 1000));
+      return;
+    }
+  }
+
+  console.warn('    [cloudflare] Challenge did not resolve within timeout — scanning challenge page');
 }
 
 // ---------------------------------------------------------------------------

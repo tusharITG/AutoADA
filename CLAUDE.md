@@ -315,3 +315,10 @@ Every task follows this flow:
   - `src/crawler.js` — Added `BROWSER_HEADERS` with realistic Chrome user-agent to `fetchUrl()`, fixing sitemap 403 errors. Rewrote `crawlLinks()` from Puppeteer-based BFS to lightweight HTTP-based BFS (no browser needed) — faster, reliable through Cloudflare. Added `extractLinksFromHtml()` for regex-based link extraction from raw HTML. Auto-enables crawling when sitemap returns 0 pages (no `--crawl` flag needed). Added `MAX_CRAWL_DEPTH=2` to limit BFS depth.
   - `src/scanner.js` — Added `setUserAgent()` with realistic Chrome UA to `scanViewport()` for better bot-detection evasion during scanning.
 - **Testing**: hereticparfum.com now discovers 20 pages from sitemap (was 0). Auto-crawl fallback works when sitemap unavailable. example.com regression test passes (score 100).
+
+### Session 2026-03-09 — Cloudflare Bot-Detection Bypass
+- **Problem**: Sites behind Cloudflare (e.g., hereticparfum.com) showed "Just a moment..." challenge page to Puppeteer. Scanner detected `meta-refresh` on the challenge page instead of real accessibility violations on the actual site. Score was 18 (fake) instead of 28 (real).
+- **Files modified**:
+  - `src/scanner.js` — Replaced `require('puppeteer')` with `puppeteer-extra` + `puppeteer-extra-plugin-stealth` to evade headless browser detection. Added `waitForChallengeResolution()` that detects Cloudflare challenge indicators (title "Just a moment...", `#challenge-running`, `.cf-browser-verification`, challenge meta-refresh) and polls up to 15s for resolution.
+  - `package.json` — Added `puppeteer-extra` and `puppeteer-extra-plugin-stealth` dependencies.
+- **Testing**: hereticparfum.com now scans the real site — 6 violations (37 elements), 33 passes, score 28. Before: 1 fake violation (meta-refresh), 10 passes, score 18. example.com regression passes (score 100).

@@ -1,0 +1,23 @@
+# Dependencies — we install fresh inside the container
+node_modules/
+
+# Generated reports — don't ship test data
+test-reports/
+reports/
+
+# Git history — not needed in production
+.git/
+.gitignore
+
+# IDE and OS files
+.idea/
+.DS_Store
+.claude/
+
+# Docker files don't need to be inside the image
+Dockerfile
+docker-compose.yml
+.dockerignore
+
+# Documentation
+README.md

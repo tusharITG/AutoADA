@@ -237,6 +237,7 @@ function closeSSEClients(scanRecord) {
 // Start server
 // ---------------------------------------------------------------------------
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
+const HOST = process.env.HOST || '0.0.0.0';
+app.listen(PORT, HOST, () => {
   console.log(`\n  AutoADA Web UI running at http://localhost:${PORT}\n`);
 });

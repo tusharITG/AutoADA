@@ -1,0 +1,14 @@
+# docker-compose.yml
+# Run locally with: docker compose up --build
+# Then open: http://localhost:3000
+
+services:
+  autoada:
+    build: .
+    ports:
+      - "3000:3000"       # Map host port 3000 → container port 3000
+    environment:
+      - PORT=3000
+    # Chromium inside Docker needs more shared memory than the default 64MB.
+    # Without this, Chrome tabs will crash with "out of memory" errors.
+    shm_size: "1gb"

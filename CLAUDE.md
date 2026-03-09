@@ -307,3 +307,11 @@ Every task follows this flow:
   - `src/web/index.html` — Added CSS for checklist section (progress bar, checkbox styling, priority badges, group titles, checked state). Added HTML section between screenshots and violations with progress indicator. Added JavaScript: `STATIC_CHECKLIST` (8 items across "Core Testing" and "Content & Media" groups), `renderChecklist()` with dynamic items from `allIncomplete` results (contrast, ARIA roles, labels, link text), `toggleChecklistItem()` with sessionStorage persistence, `updateChecklistProgress()` for progress bar.
 - **Testing**: End-to-end scan of example.com passes (score 100, all reports generate). Server loads without syntax errors.
 - **Features**: 8 static checklist items (Keyboard Nav, Screen Reader, Zoom, Form Validation, Media, Color Independence, Motion, Touch Target). Dynamic items generated from incomplete axe-core results. Checkboxes persist via sessionStorage. Progress bar shows completion count.
+
+### Session 2026-03-09 — Crawler Reliability Fix
+- **Problem**: Sites behind Cloudflare or with restricted sitemaps (HTTP 403) resulted in only 1 page being scanned. The `--crawl` flag was required but not discoverable.
+- **Root cause**: (1) `fetchUrl()` used default Node.js user-agent, blocked by Cloudflare/WAFs; (2) link crawling was Puppeteer-based, also blocked by Cloudflare JS challenges; (3) crawling was opt-in via `--crawl` flag.
+- **Files modified**:
+  - `src/crawler.js` — Added `BROWSER_HEADERS` with realistic Chrome user-agent to `fetchUrl()`, fixing sitemap 403 errors. Rewrote `crawlLinks()` from Puppeteer-based BFS to lightweight HTTP-based BFS (no browser needed) — faster, reliable through Cloudflare. Added `extractLinksFromHtml()` for regex-based link extraction from raw HTML. Auto-enables crawling when sitemap returns 0 pages (no `--crawl` flag needed). Added `MAX_CRAWL_DEPTH=2` to limit BFS depth.
+  - `src/scanner.js` — Added `setUserAgent()` with realistic Chrome UA to `scanViewport()` for better bot-detection evasion during scanning.
+- **Testing**: hereticparfum.com now discovers 20 pages from sitemap (was 0). Auto-crawl fallback works when sitemap unavailable. example.com regression test passes (score 100).

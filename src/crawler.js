@@ -2,15 +2,23 @@ const https = require('https');
 const http = require('http');
 const { URL } = require('url');
 
+// Browser-like headers to avoid bot detection (Cloudflare, etc.)
+const BROWSER_HEADERS = {
+  'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+  'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+  'Accept-Language': 'en-US,en;q=0.9',
+};
+
 /**
  * Fetch a URL and return the response body as a string.
+ * Uses browser-like headers to avoid bot detection.
  */
 function fetchUrl(url, timeout = 15000) {
   return new Promise((resolve, reject) => {
     const parsedUrl = new URL(url);
     const client = parsedUrl.protocol === 'https:' ? https : http;
 
-    const req = client.get(url, { timeout }, (res) => {
+    const req = client.get(url, { timeout, headers: BROWSER_HEADERS }, (res) => {
       // Follow redirects
       if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
         const redirectUrl = new URL(res.headers.location, url).href;
@@ -181,11 +189,45 @@ function isDisallowed(urlPath, disallowedPaths) {
 }
 
 // ---------------------------------------------------------------------------
-// Link-based crawling (BFS)
+// Link-based crawling (BFS via HTTP — no Puppeteer needed)
 // ---------------------------------------------------------------------------
 
 /**
- * Crawl links from a starting URL using Puppeteer BFS.
+ * Extract internal links from raw HTML.
+ * Parses href attributes and resolves relative URLs.
+ *
+ * @param {string} html - Raw HTML content
+ * @param {string} pageUrl - URL of the page (for resolving relative links)
+ * @param {string} baseDomain - Only return links on this domain
+ * @returns {string[]} Array of absolute same-domain URLs
+ */
+function extractLinksFromHtml(html, pageUrl, baseDomain) {
+  const links = [];
+  const hrefRegex = /href=["']([^"'#]+)["']/gi;
+  let match;
+
+  while ((match = hrefRegex.exec(html)) !== null) {
+    try {
+      const resolved = new URL(match[1], pageUrl).href;
+      const parsed = new URL(resolved);
+      if (parsed.hostname === baseDomain && parsed.protocol.startsWith('http')) {
+        links.push(resolved);
+      }
+    } catch {
+      // Skip invalid URLs
+    }
+  }
+
+  return links;
+}
+
+// Skip non-page extensions
+const SKIP_EXTENSIONS = /\.(pdf|zip|tar|gz|jpg|jpeg|png|gif|svg|webp|ico|mp3|mp4|avi|mov|doc|docx|xls|xlsx|ppt|pptx|css|js|xml|json|woff|woff2|ttf|eot)$/i;
+
+/**
+ * Crawl links from a starting URL using HTTP-based BFS.
+ * Uses lightweight HTTP requests (no Puppeteer) for speed and reliability.
+ * Works through Cloudflare and other bot-detection systems that block headless browsers.
  * Same-domain only, respects robots.txt disallowed paths.
  *
  * @param {string} startUrl - URL to start crawling from
@@ -194,7 +236,6 @@ function isDisallowed(urlPath, disallowedPaths) {
  * @returns {Promise<string[]>} Discovered URLs
  */
 async function crawlLinks(startUrl, maxPages, disallowedPaths = []) {
-  const puppeteer = require('puppeteer');
   const parsedBase = new URL(startUrl);
   const baseDomain = parsedBase.hostname;
 
@@ -206,86 +247,74 @@ async function crawlLinks(startUrl, maxPages, disallowedPaths = []) {
   function normalize(url) {
     try {
       const parsed = new URL(url);
-      // Remove hash, normalize trailing slash
       return `${parsed.origin}${parsed.pathname.replace(/\/$/, '')}${parsed.search}`;
     } catch {
       return null;
     }
   }
 
-  // Skip non-page extensions
-  const SKIP_EXTENSIONS = /\.(pdf|zip|tar|gz|jpg|jpeg|png|gif|svg|webp|ico|mp3|mp4|avi|mov|doc|docx|xls|xlsx|ppt|pptx|css|js|xml|json|woff|woff2|ttf|eot)$/i;
+  // BFS: crawl depth-first from start page, then follow links up to 2 levels deep
+  const MAX_CRAWL_DEPTH = 2;
+  const depthMap = new Map();
+  depthMap.set(normalize(startUrl), 0);
 
-  const browser = await puppeteer.launch({
-    headless: 'new',
-    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
-  });
+  while (queue.length > 0 && discovered.length < maxPages) {
+    const currentUrl = queue.shift();
+    const normalized = normalize(currentUrl);
+    if (!normalized || visited.has(normalized)) continue;
+    visited.add(normalized);
 
-  try {
-    while (queue.length > 0 && discovered.length < maxPages) {
-      const currentUrl = queue.shift();
-      const normalized = normalize(currentUrl);
-      if (!normalized || visited.has(normalized)) continue;
-      visited.add(normalized);
+    const currentDepth = depthMap.get(normalized) || 0;
 
-      // Check robots.txt
-      try {
-        const urlPath = new URL(currentUrl).pathname;
-        if (isDisallowed(urlPath, disallowedPaths)) {
-          console.log(`  [crawl] Skipping disallowed: ${urlPath}`);
-          continue;
-        }
-      } catch {
+    // Check robots.txt
+    try {
+      const urlPath = new URL(currentUrl).pathname;
+      if (isDisallowed(urlPath, disallowedPaths)) {
+        console.log(`  [crawl] Skipping disallowed: ${urlPath}`);
         continue;
       }
-
-      discovered.push(currentUrl);
-      if (discovered.length >= maxPages) break;
-
-      // Extract links from this page
-      try {
-        const page = await browser.newPage();
-        await page.setRequestInterception(true);
-        page.on('request', (req) => {
-          const type = req.resourceType();
-          if (['image', 'font', 'media', 'stylesheet'].includes(type)) {
-            req.abort();
-          } else {
-            req.continue();
-          }
-        });
-
-        await page.goto(currentUrl, { waitUntil: 'domcontentloaded', timeout: 15000 });
-
-        const links = await page.evaluate(() => {
-          return Array.from(document.querySelectorAll('a[href]'))
-            .map((a) => a.href)
-            .filter((href) => href.startsWith('http'));
-        });
-
-        await page.close();
-
-        // Filter and enqueue
-        for (const link of links) {
-          try {
-            const parsed = new URL(link);
-            if (parsed.hostname !== baseDomain) continue;
-            if (SKIP_EXTENSIONS.test(parsed.pathname)) continue;
-
-            const norm = normalize(link);
-            if (norm && !visited.has(norm)) {
-              queue.push(link);
-            }
-          } catch {
-            // Skip invalid URLs
-          }
-        }
-      } catch (err) {
-        console.warn(`  [crawl] Could not extract links from ${currentUrl}: ${err.message}`);
-      }
+    } catch {
+      continue;
     }
-  } finally {
-    await browser.close();
+
+    // Skip non-page extensions
+    try {
+      if (SKIP_EXTENSIONS.test(new URL(currentUrl).pathname)) continue;
+    } catch {
+      continue;
+    }
+
+    discovered.push(currentUrl);
+    if (discovered.length >= maxPages) break;
+
+    // Only follow links if within depth limit
+    if (currentDepth >= MAX_CRAWL_DEPTH) continue;
+
+    // Fetch page HTML and extract links
+    try {
+      const html = await fetchUrl(currentUrl, 10000);
+
+      const links = extractLinksFromHtml(html, currentUrl, baseDomain);
+
+      for (const link of links) {
+        try {
+          const parsed = new URL(link);
+          if (SKIP_EXTENSIONS.test(parsed.pathname)) continue;
+
+          const norm = normalize(link);
+          if (norm && !visited.has(norm)) {
+            queue.push(link);
+            if (!depthMap.has(norm)) {
+              depthMap.set(norm, currentDepth + 1);
+            }
+          }
+        } catch {
+          // Skip invalid URLs
+        }
+      }
+    } catch (err) {
+      console.warn(`  [crawl] Could not fetch ${currentUrl}: ${err.message}`);
+    }
   }
 
   console.log(`  [crawl] Discovered ${discovered.length} page(s) via link crawling`);
@@ -341,9 +370,15 @@ async function discoverPages(baseUrl, extraUrlsFile, maxPages = 100, crawlOption
     allUrls.push(...resolvedExtra);
   }
 
-  // 3. Link-based crawling (if enabled)
-  if (crawlOptions.enabled) {
-    console.log(`  Link-based crawling enabled...`);
+  // 3. Link-based crawling
+  // Auto-enable when sitemap found 0 pages (site has no sitemap or blocks it)
+  const shouldCrawl = crawlOptions.enabled || sitemapUrls.length === 0;
+  if (shouldCrawl) {
+    if (!crawlOptions.enabled && sitemapUrls.length === 0) {
+      console.log(`  No sitemap found — auto-crawling links to discover pages...`);
+    } else {
+      console.log(`  Link-based crawling enabled...`);
+    }
     const disallowedPaths = await parseRobotsTxt(baseUrl);
     const crawledUrls = await crawlLinks(baseUrl, maxPages, disallowedPaths);
     allUrls.push(...crawledUrls);

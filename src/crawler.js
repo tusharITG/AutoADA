@@ -115,20 +115,204 @@ function readExtraUrls(filePath) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// robots.txt parsing
+// ---------------------------------------------------------------------------
+
+/**
+ * Fetch and parse /robots.txt, extracting Disallow patterns for *.
+ * Returns an array of disallowed path prefixes.
+ */
+async function parseRobotsTxt(baseUrl) {
+  const parsedBase = new URL(baseUrl);
+  const robotsUrl = `${parsedBase.origin}/robots.txt`;
+
+  try {
+    const text = await fetchUrl(robotsUrl);
+    const lines = text.split('\n').map((l) => l.trim());
+
+    const disallowed = [];
+    let inWildcardAgent = false;
+
+    for (const line of lines) {
+      // Skip comments
+      if (line.startsWith('#') || line === '') continue;
+
+      const lower = line.toLowerCase();
+      if (lower.startsWith('user-agent:')) {
+        const agent = line.slice('user-agent:'.length).trim();
+        inWildcardAgent = agent === '*';
+        continue;
+      }
+
+      if (inWildcardAgent && lower.startsWith('disallow:')) {
+        const path = line.slice('disallow:'.length).trim();
+        if (path) {
+          disallowed.push(path);
+        }
+      }
+    }
+
+    if (disallowed.length > 0) {
+      console.log(`  [robots.txt] Found ${disallowed.length} disallowed path(s)`);
+    }
+    return disallowed;
+  } catch (err) {
+    console.warn(`  Warning: Could not fetch robots.txt: ${err.message}`);
+    return [];
+  }
+}
+
+/**
+ * Check if a URL path is disallowed by robots.txt rules.
+ */
+function isDisallowed(urlPath, disallowedPaths) {
+  for (const pattern of disallowedPaths) {
+    // Simple prefix match (handles most robots.txt patterns)
+    if (pattern.endsWith('*')) {
+      if (urlPath.startsWith(pattern.slice(0, -1))) return true;
+    } else if (pattern.endsWith('$')) {
+      if (urlPath === pattern.slice(0, -1)) return true;
+    } else {
+      if (urlPath.startsWith(pattern)) return true;
+    }
+  }
+  return false;
+}
+
+// ---------------------------------------------------------------------------
+// Link-based crawling (BFS)
+// ---------------------------------------------------------------------------
+
+/**
+ * Crawl links from a starting URL using Puppeteer BFS.
+ * Same-domain only, respects robots.txt disallowed paths.
+ *
+ * @param {string} startUrl - URL to start crawling from
+ * @param {number} maxPages - Maximum pages to discover
+ * @param {string[]} disallowedPaths - Paths disallowed by robots.txt
+ * @returns {Promise<string[]>} Discovered URLs
+ */
+async function crawlLinks(startUrl, maxPages, disallowedPaths = []) {
+  const puppeteer = require('puppeteer');
+  const parsedBase = new URL(startUrl);
+  const baseDomain = parsedBase.hostname;
+
+  const visited = new Set();
+  const discovered = [];
+  const queue = [startUrl];
+
+  // Normalize URL for dedup
+  function normalize(url) {
+    try {
+      const parsed = new URL(url);
+      // Remove hash, normalize trailing slash
+      return `${parsed.origin}${parsed.pathname.replace(/\/$/, '')}${parsed.search}`;
+    } catch {
+      return null;
+    }
+  }
+
+  // Skip non-page extensions
+  const SKIP_EXTENSIONS = /\.(pdf|zip|tar|gz|jpg|jpeg|png|gif|svg|webp|ico|mp3|mp4|avi|mov|doc|docx|xls|xlsx|ppt|pptx|css|js|xml|json|woff|woff2|ttf|eot)$/i;
+
+  const browser = await puppeteer.launch({
+    headless: 'new',
+    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
+  });
+
+  try {
+    while (queue.length > 0 && discovered.length < maxPages) {
+      const currentUrl = queue.shift();
+      const normalized = normalize(currentUrl);
+      if (!normalized || visited.has(normalized)) continue;
+      visited.add(normalized);
+
+      // Check robots.txt
+      try {
+        const urlPath = new URL(currentUrl).pathname;
+        if (isDisallowed(urlPath, disallowedPaths)) {
+          console.log(`  [crawl] Skipping disallowed: ${urlPath}`);
+          continue;
+        }
+      } catch {
+        continue;
+      }
+
+      discovered.push(currentUrl);
+      if (discovered.length >= maxPages) break;
+
+      // Extract links from this page
+      try {
+        const page = await browser.newPage();
+        await page.setRequestInterception(true);
+        page.on('request', (req) => {
+          const type = req.resourceType();
+          if (['image', 'font', 'media', 'stylesheet'].includes(type)) {
+            req.abort();
+          } else {
+            req.continue();
+          }
+        });
+
+        await page.goto(currentUrl, { waitUntil: 'domcontentloaded', timeout: 15000 });
+
+        const links = await page.evaluate(() => {
+          return Array.from(document.querySelectorAll('a[href]'))
+            .map((a) => a.href)
+            .filter((href) => href.startsWith('http'));
+        });
+
+        await page.close();
+
+        // Filter and enqueue
+        for (const link of links) {
+          try {
+            const parsed = new URL(link);
+            if (parsed.hostname !== baseDomain) continue;
+            if (SKIP_EXTENSIONS.test(parsed.pathname)) continue;
+
+            const norm = normalize(link);
+            if (norm && !visited.has(norm)) {
+              queue.push(link);
+            }
+          } catch {
+            // Skip invalid URLs
+          }
+        }
+      } catch (err) {
+        console.warn(`  [crawl] Could not extract links from ${currentUrl}: ${err.message}`);
+      }
+    }
+  } finally {
+    await browser.close();
+  }
+
+  console.log(`  [crawl] Discovered ${discovered.length} page(s) via link crawling`);
+  return discovered;
+}
+
+// ---------------------------------------------------------------------------
+// Main page discovery
+// ---------------------------------------------------------------------------
+
 /**
  * Discover all pages to scan.
  *
  * Strategy:
  * 1. Fetch and parse sitemap.xml
  * 2. Read extra URLs from --extra-urls file
- * 3. Deduplicate, enforce same-domain, respect maxPages
+ * 3. (Optional) Crawl links from the base URL (--crawl)
+ * 4. Deduplicate, enforce same-domain, respect maxPages
  *
  * @param {string} baseUrl - The website base URL
  * @param {string|null} extraUrlsFile - Path to text file with additional URLs
  * @param {number} maxPages - Maximum pages to scan
+ * @param {object} [crawlOptions] - Crawl options
+ * @param {boolean} [crawlOptions.enabled=false] - Enable link crawling
  * @returns {Promise<string[]>} Array of deduplicated URLs
  */
-async function discoverPages(baseUrl, extraUrlsFile, maxPages = 100) {
+async function discoverPages(baseUrl, extraUrlsFile, maxPages = 100, crawlOptions = {}) {
   const parsedBase = new URL(baseUrl);
   const baseDomain = parsedBase.hostname;
 
@@ -157,7 +341,15 @@ async function discoverPages(baseUrl, extraUrlsFile, maxPages = 100) {
     allUrls.push(...resolvedExtra);
   }
 
-  // 3. Deduplicate and enforce same-domain
+  // 3. Link-based crawling (if enabled)
+  if (crawlOptions.enabled) {
+    console.log(`  Link-based crawling enabled...`);
+    const disallowedPaths = await parseRobotsTxt(baseUrl);
+    const crawledUrls = await crawlLinks(baseUrl, maxPages, disallowedPaths);
+    allUrls.push(...crawledUrls);
+  }
+
+  // 4. Deduplicate and enforce same-domain
   const seen = new Set();
   const deduplicated = [];
 

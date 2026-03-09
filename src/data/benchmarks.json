@@ -1,8 +1,11 @@
 {
   "overall_average": 34,
-  "source": "Based on WebAIM Million annual analysis and industry accessibility studies",
-  "last_updated": "2025",
-  "methodology_note": "Scores represent an approximate 0-100 accessibility scale derived from automated testing of homepages. Automated tools typically catch only 30-40% of all accessibility issues, so real-world accessibility may be lower than indicated.",
+  "failure_rate": 94.8,
+  "average_errors_per_page": 51,
+  "source": "WebAIM Million 2025 — Annual accessibility analysis of the top 1,000,000 homepages",
+  "source_url": "https://webaim.org/projects/million/",
+  "last_updated": "2025-03",
+  "methodology_note": "Scores represent an approximate 0-100 accessibility scale derived from automated testing of homepages. Automated tools typically catch only 30-40% of all accessibility issues, so real-world accessibility may be lower than indicated. 94.8% of the top 1,000,000 homepages have detectable WCAG 2 A/AA failures with an average of 51 errors per page.",
   "by_industry": {
     "ecommerce": 30,
     "saas": 38,
@@ -43,12 +46,12 @@
     }
   },
   "common_issues": {
-    "most_common": "Low contrast text (found on 83% of homepages)",
-    "second_common": "Missing alternative text for images (found on 55% of homepages)",
-    "third_common": "Missing form input labels (found on 46% of homepages)",
-    "fourth_common": "Empty links with no discernible text (found on 44% of homepages)",
-    "fifth_common": "Empty buttons with no accessible name (found on 27% of homepages)",
-    "sixth_common": "Missing document language attribute (found on 17% of homepages)"
+    "most_common": "Low contrast text (found on 79.1% of homepages)",
+    "second_common": "Missing alternative text for images (found on 55.5% of homepages)",
+    "third_common": "Missing form input labels (found on 48.0% of homepages)",
+    "fourth_common": "Empty links with no discernible text (found on 45.4% of homepages)",
+    "fifth_common": "Empty buttons with no accessible name (found on 29.6% of homepages)",
+    "sixth_common": "Missing document language attribute (found on 15.8% of homepages)"
   },
   "percentile_thresholds": {
     "top_1_percent": 82,

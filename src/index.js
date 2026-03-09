@@ -110,6 +110,10 @@ async function main() {
     .option('-t, --tags <tags>', 'WCAG tags, comma-separated', 'wcag2a,wcag2aa,wcag21a,wcag21aa,wcag22aa')
     .option('--timeout <ms>', 'Page load timeout in milliseconds', '30000')
     .option('--max-pages <n>', 'Maximum pages to scan', '100')
+    .option('--crawl', 'Enable link-based page crawling with robots.txt respect', false)
+    .option('--interactive', 'Scan interactive states (accordions, tabs, details)', false)
+    .option('--concurrency <n>', 'Number of pages to scan concurrently', '1')
+    .option('--axe-config <path>', 'Path to axe-core config JSON (disableRules, include, exclude)')
     .parse();
 
   const url = program.args[0];
@@ -132,6 +136,21 @@ async function main() {
   const tags = opts.tags.split(',').map((t) => t.trim());
   const timeout = parseInt(opts.timeout, 10);
   const maxPages = parseInt(opts.maxPages, 10);
+  const concurrency = Math.max(1, parseInt(opts.concurrency, 10) || 1);
+
+  // Load optional axe-core configuration
+  let axeConfig = {};
+  if (opts.axeConfig) {
+    try {
+      const configPath = path.resolve(opts.axeConfig);
+      const raw = fs.readFileSync(configPath, 'utf-8');
+      axeConfig = JSON.parse(raw);
+      console.log(`  axe-core config: ${configPath}`);
+    } catch (err) {
+      console.error(chalk.red(`Error reading axe-config file: ${err.message}`));
+      process.exit(1);
+    }
+  }
 
   console.log(chalk.bold('\n🔍 AutoADA — ADA/WCAG Compliance Scanner\n'));
   console.log(`  Target: ${chalk.cyan(url)}`);
@@ -143,7 +162,7 @@ async function main() {
   console.log(chalk.bold('\n📄 Discovering pages...'));
   let pages;
   try {
-    pages = await discoverPages(url, opts.extraUrls, maxPages);
+    pages = await discoverPages(url, opts.extraUrls, maxPages, { enabled: opts.crawl });
   } catch (err) {
     console.error(chalk.red(`Error discovering pages: ${err.message}`));
     console.log(chalk.yellow('  Falling back to scanning only the provided URL.'));
@@ -154,7 +173,7 @@ async function main() {
   console.log(chalk.bold(`\n🔎 Scanning ${pages.length} page(s)...`));
   let scanResult;
   try {
-    scanResult = await scanAllPages(pages, { tags, timeout });
+    scanResult = await scanAllPages(pages, { tags, timeout, interactive: opts.interactive, concurrency, axeConfig });
   } catch (err) {
     console.error(chalk.red(`\nFatal error during scanning: ${err.message}`));
     console.error(chalk.dim('  This might be a Puppeteer/Chrome issue. Ensure Chrome or Chromium is installed.'));

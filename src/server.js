@@ -19,9 +19,22 @@ const app = express();
 app.use(express.json());
 
 // ---------------------------------------------------------------------------
-// In-memory scan store
+// In-memory scan store with TTL cleanup
 // ---------------------------------------------------------------------------
 const scans = new Map();
+const SCAN_TTL_MS = 30 * 60 * 1000; // 30 minutes
+const MAX_CONCURRENT_SCANS = 3;
+
+// Periodic cleanup: remove completed/errored scans older than TTL
+setInterval(() => {
+  const now = Date.now();
+  for (const [id, scan] of scans) {
+    if (scan.status === 'running') continue;
+    if (now - scan.startedAt > SCAN_TTL_MS) {
+      scans.delete(id);
+    }
+  }
+}, 60 * 1000); // Check every minute
 
 // ---------------------------------------------------------------------------
 // Serve frontend
@@ -36,10 +49,16 @@ app.get('/', (_req, res) => {
 // POST /api/scan — Start a new scan
 // ---------------------------------------------------------------------------
 app.post('/api/scan', (req, res) => {
-  const { url, maxPages = 100, timeout = 30000, tags, clientName, clientColor } = req.body;
+  const { url, maxPages = 100, timeout = 30000, tags, clientName, clientColor, crawl = false, interactive = false, concurrency = 1 } = req.body;
 
   if (!url) {
     return res.status(400).json({ error: 'url is required' });
+  }
+
+  // Enforce concurrent scan limit
+  const runningScans = [...scans.values()].filter((s) => s.status === 'running').length;
+  if (runningScans >= MAX_CONCURRENT_SCANS) {
+    return res.status(429).json({ error: `Maximum ${MAX_CONCURRENT_SCANS} concurrent scans allowed. Please wait for a scan to complete.` });
   }
 
   try {
@@ -58,7 +77,7 @@ app.post('/api/scan', (req, res) => {
     scores: null,
     error: null,
     startedAt: Date.now(),
-    options: { maxPages, timeout, tags, clientName, clientColor },
+    options: { maxPages, timeout, tags, clientName, clientColor, crawl, interactive, concurrency: Math.max(1, parseInt(concurrency, 10) || 1) },
     sseClients: [],
   };
 
@@ -192,7 +211,7 @@ async function runScan(scanRecord) {
   broadcastSSE(scanRecord, { phase: 'discovering', message: 'Discovering pages...' });
   let pages;
   try {
-    pages = await discoverPages(url, null, options.maxPages);
+    pages = await discoverPages(url, null, options.maxPages, { enabled: options.crawl });
   } catch {
     pages = [url];
   }
@@ -202,6 +221,8 @@ async function runScan(scanRecord) {
   const scanResult = await scanAllPages(pages, {
     tags: wcagTags,
     timeout: options.timeout,
+    interactive: options.interactive,
+    concurrency: options.concurrency || 1,
     onProgress: (data) => broadcastSSE(scanRecord, data),
   });
 
@@ -231,6 +252,8 @@ function closeSSEClients(scanRecord) {
     client.end();
   }
   scanRecord.sseClients = [];
+  // Free progress array — no longer needed after all clients disconnected
+  scanRecord.progress = [];
 }
 
 // ---------------------------------------------------------------------------

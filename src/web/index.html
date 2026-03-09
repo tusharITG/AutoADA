@@ -187,6 +187,29 @@ header .container { display: flex; align-items: center; justify-content: space-b
 @media (max-width: 800px) { .chart-row { grid-template-columns: 1fr; } }
 .chart-container { position: relative; height: 250px; }
 
+/* Manual Testing Checklist */
+.checklist-section { margin-bottom: 24px; }
+.checklist-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+.checklist-progress { display: flex; align-items: center; gap: 12px; }
+.checklist-progress-text { font-size: 13px; color: var(--text-dim); }
+.checklist-progress-bar { width: 120px; height: 6px; background: var(--surface2); border-radius: 3px; overflow: hidden; }
+.checklist-progress-fill { height: 100%; background: var(--pass); border-radius: 3px; transition: width .3s ease; }
+.checklist-group-title { font-size: 12px; color: var(--accent-light); text-transform: uppercase; letter-spacing: .5px; margin: 16px 0 8px; font-weight: 600; }
+.checklist-group-title:first-child { margin-top: 0; }
+.checklist-item { display: flex; align-items: flex-start; gap: 12px; padding: 10px 12px; border-radius: var(--radius-sm); transition: background .15s; }
+.checklist-item:hover { background: var(--surface2); }
+.checklist-item input[type="checkbox"] { appearance: none; -webkit-appearance: none; width: 18px; height: 18px; min-width: 18px; border: 2px solid var(--border); border-radius: 4px; background: var(--surface2); cursor: pointer; position: relative; margin-top: 1px; transition: all .15s; }
+.checklist-item input[type="checkbox"]:checked { background: var(--pass); border-color: var(--pass); }
+.checklist-item input[type="checkbox"]:checked::after { content: '\2713'; position: absolute; top: -1px; left: 2px; font-size: 12px; color: #fff; font-weight: 700; }
+.checklist-item label { cursor: pointer; flex: 1; }
+.checklist-item-name { font-size: 14px; font-weight: 500; }
+.checklist-item-desc { font-size: 12px; color: var(--text-dim); margin-top: 2px; line-height: 1.4; }
+.checklist-item.checked .checklist-item-name { text-decoration: line-through; color: var(--text-dim); }
+.checklist-item .priority-badge { font-size: 10px; text-transform: uppercase; letter-spacing: .5px; padding: 2px 8px; border-radius: 10px; font-weight: 600; white-space: nowrap; margin-top: 2px; }
+.priority-badge.high { background: rgba(255,71,87,.15); color: var(--critical); }
+.priority-badge.medium { background: rgba(255,165,2,.15); color: var(--moderate); }
+.priority-badge.low { background: rgba(55,66,250,.15); color: var(--minor); }
+
 /* Violations Table */
 .violations-section { margin-bottom: 24px; }
 .violations-toolbar { display: flex; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; }
@@ -584,6 +607,20 @@ header .container { display: flex; align-items: center; justify-content: space-b
     </div>
   </div>
 
+  <!-- Manual Testing Checklist -->
+  <div class="checklist-section" id="checklistSection">
+    <div class="card">
+      <div class="checklist-header">
+        <div class="card-title" style="margin-bottom:0;">Manual Testing Checklist</div>
+        <div class="checklist-progress">
+          <span class="checklist-progress-text" id="checklistProgressText">0 / 0</span>
+          <div class="checklist-progress-bar"><div class="checklist-progress-fill" id="checklistProgressFill"></div></div>
+        </div>
+      </div>
+      <div id="checklistItems"></div>
+    </div>
+  </div>
+
   <!-- Violations Table -->
   <div class="violations-section">
     <div class="card">
@@ -841,16 +878,16 @@ header .container { display: flex; align-items: center; justify-content: space-b
         <div class="stat-desc">Industry Average Score</div>
       </div>
       <div class="about-stat">
-        <div class="stat-num">86%</div>
+        <div class="stat-num">79.1%</div>
         <div class="stat-desc">Sites with Low Contrast</div>
       </div>
       <div class="about-stat">
-        <div class="stat-num">60%</div>
+        <div class="stat-num">55.5%</div>
         <div class="stat-desc">Sites Missing Alt Text</div>
       </div>
       <div class="about-stat">
-        <div class="stat-num">51%</div>
-        <div class="stat-desc">Sites with Empty Links</div>
+        <div class="stat-num">94.8%</div>
+        <div class="stat-desc">Sites Failing WCAG</div>
       </div>
     </div>
     <div style="max-width:600px; margin:0 auto;">
@@ -1138,8 +1175,111 @@ function renderDashboard() {
   // Screenshots
   renderScreenshots('all');
 
+  // Manual testing checklist
+  renderChecklist();
+
   // Violations table
   renderViolationsTable();
+}
+
+// ===== Manual Testing Checklist =====
+const STATIC_CHECKLIST = [
+  { id: 'keyboard', name: 'Keyboard Navigation', desc: 'Tab through all interactive elements. Verify focus order is logical and all functionality is operable without a mouse.', priority: 'high', group: 'Core Testing' },
+  { id: 'screen-reader', name: 'Screen Reader Testing', desc: 'Test with VoiceOver (Mac), NVDA (Win), or JAWS. Verify all content is announced correctly and navigation is coherent.', priority: 'high', group: 'Core Testing' },
+  { id: 'zoom', name: 'Zoom Testing (200%)', desc: 'Zoom the browser to 200%. Verify no content is lost, overlapping, or requires horizontal scrolling.', priority: 'high', group: 'Core Testing' },
+  { id: 'form-validation', name: 'Form Validation', desc: 'Submit forms with empty/invalid data. Verify error messages are descriptive, programmatically associated, and announced by screen readers.', priority: 'medium', group: 'Core Testing' },
+  { id: 'media', name: 'Media Accessibility', desc: 'Check that videos have captions, audio has transcripts, and media controls are keyboard-accessible.', priority: 'medium', group: 'Content & Media' },
+  { id: 'color-independence', name: 'Color Independence', desc: 'Verify that color is not the sole means of conveying information (e.g., error states, required fields, chart data).', priority: 'medium', group: 'Content & Media' },
+  { id: 'motion', name: 'Motion & Animation', desc: 'Verify animations can be paused/stopped, and prefers-reduced-motion is respected. Check for no flashing content (>3 per second).', priority: 'low', group: 'Content & Media' },
+  { id: 'touch-target', name: 'Touch Target Size', desc: 'On mobile, verify interactive targets are at least 24x24 CSS pixels (WCAG 2.2 AA) with adequate spacing.', priority: 'medium', group: 'Content & Media' },
+];
+
+function renderChecklist() {
+  const container = document.getElementById('checklistItems');
+  const r = scanResults;
+
+  // Build dynamic items from incomplete results
+  const dynamicItems = [];
+  const incomplete = r.allIncomplete || [];
+  for (const rule of incomplete) {
+    const nodeCount = rule.nodes?.length || 0;
+    if (rule.id === 'color-contrast') {
+      dynamicItems.push({ id: 'dyn-contrast', name: 'Manual Contrast Verification', desc: `${nodeCount} element(s) need manual contrast checks (background images, gradients, or complex patterns).`, priority: 'high', group: 'Automated Scan Follow-up' });
+    } else if (rule.id === 'aria-allowed-role' || rule.id === 'aria-roles') {
+      dynamicItems.push({ id: 'dyn-aria-roles', name: 'ARIA Role Verification', desc: `${nodeCount} element(s) have ARIA roles that need manual verification for correct usage.`, priority: 'medium', group: 'Automated Scan Follow-up' });
+    } else if (rule.id === 'label') {
+      dynamicItems.push({ id: 'dyn-labels', name: 'Form Label Verification', desc: `${nodeCount} form element(s) need manual label verification.`, priority: 'high', group: 'Automated Scan Follow-up' });
+    } else if (rule.id === 'link-in-text-block') {
+      dynamicItems.push({ id: 'dyn-link-text', name: 'Link Distinguishability', desc: `${nodeCount} link(s) in text blocks need manual check for non-color visual differentiators.`, priority: 'medium', group: 'Automated Scan Follow-up' });
+    }
+  }
+
+  // Combine: dynamic (priority) + static
+  const allItems = [...dynamicItems, ...STATIC_CHECKLIST];
+
+  // Load checked state from sessionStorage
+  const storageKey = 'autoada-checklist-' + (r.url || '');
+  let checked = {};
+  try { checked = JSON.parse(sessionStorage.getItem(storageKey)) || {}; } catch {}
+
+  // Group items
+  const groups = {};
+  for (const item of allItems) {
+    if (!groups[item.group]) groups[item.group] = [];
+    groups[item.group].push(item);
+  }
+
+  // Render
+  let html = '';
+  for (const [groupName, items] of Object.entries(groups)) {
+    html += `<div class="checklist-group-title">${groupName}</div>`;
+    for (const item of items) {
+      const isChecked = !!checked[item.id];
+      html += `<div class="checklist-item${isChecked ? ' checked' : ''}">
+        <input type="checkbox" id="chk-${item.id}" ${isChecked ? 'checked' : ''} onchange="toggleChecklistItem('${item.id}', this)">
+        <label for="chk-${item.id}">
+          <div class="checklist-item-name">${item.name}</div>
+          <div class="checklist-item-desc">${item.desc}</div>
+        </label>
+        <span class="priority-badge ${item.priority}">${item.priority}</span>
+      </div>`;
+    }
+  }
+  container.innerHTML = html;
+  updateChecklistProgress(allItems, checked);
+}
+
+function toggleChecklistItem(id, checkbox) {
+  const r = scanResults;
+  const storageKey = 'autoada-checklist-' + (r.url || '');
+  let checked = {};
+  try { checked = JSON.parse(sessionStorage.getItem(storageKey)) || {}; } catch {}
+
+  if (checkbox.checked) {
+    checked[id] = true;
+  } else {
+    delete checked[id];
+  }
+  sessionStorage.setItem(storageKey, JSON.stringify(checked));
+
+  // Toggle visual state
+  const item = checkbox.closest('.checklist-item');
+  item.classList.toggle('checked', checkbox.checked);
+
+  // Update progress
+  const allItems = [...document.querySelectorAll('#checklistItems input[type="checkbox"]')];
+  const total = allItems.length;
+  const done = allItems.filter(c => c.checked).length;
+  updateChecklistProgress(null, null, total, done);
+}
+
+function updateChecklistProgress(allItems, checked, total, done) {
+  if (total === undefined) {
+    total = allItems.length;
+    done = Object.keys(checked).filter(k => allItems.some(i => i.id === k)).length;
+  }
+  document.getElementById('checklistProgressText').textContent = `${done} / ${total}`;
+  document.getElementById('checklistProgressFill').style.width = total > 0 ? `${(done / total) * 100}%` : '0%';
 }
 
 // ===== Gauge Animation =====
@@ -1223,6 +1363,14 @@ function renderPrincipleChart(principles) {
 }
 
 // ===== Screenshots =====
+function getScreenshotSrc(shot) {
+  if (!shot) return null;
+  if (shot.image) return shot.image;
+  if (shot.base64) return 'data:image/png;base64,' + shot.base64;
+  if (typeof shot === 'string') return 'data:image/png;base64,' + shot;
+  return null;
+}
+
 function renderScreenshots(pageFilter) {
   const grid = document.getElementById('screenshotGrid');
   grid.innerHTML = '';
@@ -1232,20 +1380,48 @@ function renderScreenshots(pageFilter) {
 
   for (const page of pages) {
     const label = new URL(page.url).pathname || '/';
-    if (page.desktop?.screenshot?.image) {
+    const desktopSrc = getScreenshotSrc(page.desktop?.screenshot);
+    const mobileSrc = getScreenshotSrc(page.mobile?.screenshot);
+
+    if (desktopSrc) {
       hasScreenshots = true;
       grid.innerHTML += `
         <div class="screenshot-card">
           <div class="ss-label">Desktop — ${escapeHtml(label)}</div>
-          <img src="${page.desktop.screenshot.image}" alt="Desktop screenshot" onclick="openLightbox(this.src)">
+          <img src="${desktopSrc}" alt="Desktop screenshot" onclick="openLightbox(this.src)">
         </div>`;
     }
-    if (page.mobile?.screenshot?.image) {
+    if (mobileSrc) {
       hasScreenshots = true;
       grid.innerHTML += `
         <div class="screenshot-card">
           <div class="ss-label">Mobile — ${escapeHtml(label)}</div>
-          <img src="${page.mobile.screenshot.image}" alt="Mobile screenshot" onclick="openLightbox(this.src)">
+          <img src="${mobileSrc}" alt="Mobile screenshot" onclick="openLightbox(this.src)">
+        </div>`;
+    }
+
+    // Render additional region screenshots
+    const desktopRegions = page.desktop?.screenshot?.regions || [];
+    const mobileRegions = page.mobile?.screenshot?.regions || [];
+
+    for (let i = 1; i < desktopRegions.length; i++) {
+      const region = desktopRegions[i];
+      if (!region.base64) continue;
+      hasScreenshots = true;
+      grid.innerHTML += `
+        <div class="screenshot-card">
+          <div class="ss-label">Desktop ${escapeHtml(region.label || 'Region ' + (i+1))} — ${escapeHtml(label)}</div>
+          <img src="data:image/png;base64,${region.base64}" alt="Desktop region ${i+1}" onclick="openLightbox(this.src)">
+        </div>`;
+    }
+    for (let i = 1; i < mobileRegions.length; i++) {
+      const region = mobileRegions[i];
+      if (!region.base64) continue;
+      hasScreenshots = true;
+      grid.innerHTML += `
+        <div class="screenshot-card">
+          <div class="ss-label">Mobile ${escapeHtml(region.label || 'Region ' + (i+1))} — ${escapeHtml(label)}</div>
+          <img src="data:image/png;base64,${region.base64}" alt="Mobile region ${i+1}" onclick="openLightbox(this.src)">
         </div>`;
     }
   }

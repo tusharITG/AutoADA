@@ -13,7 +13,7 @@ const CATEGORY_TO_PRINCIPLE = {
   'cat.color': 'Perceivable',
   'cat.sensory-and-visual-cues': 'Perceivable',
   'cat.keyboard': 'Operable',
-  'cat.time-and-media': 'Operable',
+  'cat.time-limits': 'Operable',
   'cat.seizures': 'Operable',
   'cat.navigation': 'Operable',
   'cat.readable': 'Understandable',
@@ -40,27 +40,44 @@ const SEVERITY_WEIGHTS = {
 /**
  * Calculate overall compliance score (0-100).
  *
- * Uses a blended approach:
- * - Base: pass rate (passes / (passes + violations)) × 100
- * - Penalty: weighted severity deduction scaled logarithmically to prevent
- *   a handful of repeated violations from cratering the score
- *
- * This ensures a site with 36 passes and 4 violation rules doesn't score 0.
+ * Uses a node-count-weighted approach:
+ * - Base: weighted pass rate where each rule is weighted by the number of
+ *   elements it affects. Violations are further weighted by severity.
+ *   This prevents a single rule with 500 affected elements from being
+ *   treated the same as a rule affecting 1 element.
+ * - Penalty: logarithmic severity deduction to prevent a handful of
+ *   repeated violations from cratering the score.
  */
 function calculateOverallScore(violations, passes) {
-  const totalViolationRules = violations.length;
-  const totalPassRules = (passes || []).length;
-  const totalRules = totalViolationRules + totalPassRules;
+  const violationList = violations || [];
+  const passList = passes || [];
 
-  if (totalRules === 0) return 100;
+  if (violationList.length === 0 && passList.length === 0) return 100;
 
-  // Base score from pass rate
-  const passRate = totalPassRules / totalRules;
+  // Weight each violation by node count (severity is handled separately in the penalty)
+  let weightedViolations = 0;
+  for (const v of violationList) {
+    const nodeCount = v.nodes ? v.nodes.length : 1;
+    weightedViolations += nodeCount;
+  }
+
+  // Weight each pass by node count
+  let weightedPasses = 0;
+  for (const p of passList) {
+    const nodeCount = p.nodes ? p.nodes.length : 1;
+    weightedPasses += nodeCount;
+  }
+
+  const totalWeighted = weightedViolations + weightedPasses;
+  if (totalWeighted === 0) return 100;
+
+  // Base score from weighted pass rate
+  const passRate = weightedPasses / totalWeighted;
   const baseScore = passRate * 100;
 
   // Severity penalty (logarithmically scaled to avoid runaway deductions)
   let rawPenalty = 0;
-  for (const v of violations) {
+  for (const v of violationList) {
     const severity = v.impact || 'minor';
     const weight = SEVERITY_WEIGHTS[severity] || 1;
     const nodeCount = v.nodes ? v.nodes.length : 1;
@@ -68,8 +85,9 @@ function calculateOverallScore(violations, passes) {
     rawPenalty += weight * (1 + Math.log2(nodeCount));
   }
 
-  // Scale penalty relative to total rules checked (more rules = more tolerance)
-  const scaledPenalty = Math.min(baseScore, (rawPenalty / totalRules) * 25);
+  // Scale penalty relative to total weighted count (more elements checked = more tolerance)
+  const totalRules = violationList.length + passList.length;
+  const scaledPenalty = Math.min(baseScore, (rawPenalty / Math.max(totalRules, 1)) * 25);
 
   return Math.max(0, Math.min(100, Math.round(baseScore - scaledPenalty)));
 }
@@ -94,14 +112,14 @@ function getSeverityBreakdown(violations) {
 
 /**
  * Calculate per-WCAG-principle scores.
- * Groups violations and passes by principle, calculates pass rate.
+ * Groups violations, passes, and incomplete items by principle.
  */
-function calculatePrincipleScores(violations, passes) {
+function calculatePrincipleScores(violations, passes, incomplete) {
   const principles = {
-    Perceivable: { violations: 0, passes: 0 },
-    Operable: { violations: 0, passes: 0 },
-    Understandable: { violations: 0, passes: 0 },
-    Robust: { violations: 0, passes: 0 },
+    Perceivable: { violations: 0, passes: 0, needsReview: 0 },
+    Operable: { violations: 0, passes: 0, needsReview: 0 },
+    Understandable: { violations: 0, passes: 0, needsReview: 0 },
+    Robust: { violations: 0, passes: 0, needsReview: 0 },
   };
 
   // Count violations per principle
@@ -120,7 +138,15 @@ function calculatePrincipleScores(violations, passes) {
     }
   }
 
-  // Calculate scores
+  // Count incomplete (needs review) per principle
+  for (const i of (incomplete || [])) {
+    const principle = getPrinciple(i.tags);
+    if (principle && principles[principle]) {
+      principles[principle].needsReview += i.nodes ? i.nodes.length : 1;
+    }
+  }
+
+  // Calculate scores (incomplete NOT counted as violations — they're ambiguous)
   const result = {};
   for (const [name, data] of Object.entries(principles)) {
     const total = data.violations + data.passes;
@@ -134,6 +160,7 @@ function calculatePrincipleScores(violations, passes) {
       status,
       violations: data.violations,
       passes: data.passes,
+      needsReview: data.needsReview,
       total,
     };
   }
@@ -222,11 +249,17 @@ function getBenchmarkContext(score, industry) {
 function calculateScores(scanResult, industry) {
   const violations = scanResult.allViolations || scanResult.violations || [];
   const passes = scanResult.allPasses || scanResult.passes || [];
+  const incomplete = scanResult.allIncomplete || scanResult.incomplete || [];
 
   const overall = calculateOverallScore(violations, passes);
   const severityBreakdown = getSeverityBreakdown(violations);
-  const byPrinciple = calculatePrincipleScores(violations, passes);
+  const byPrinciple = calculatePrincipleScores(violations, passes, incomplete);
   const benchmarkContext = getBenchmarkContext(overall, industry);
+
+  // Count incomplete (needs review) nodes
+  const totalIncompleteNodes = incomplete.reduce(
+    (acc, i) => acc + (i.nodes ? i.nodes.length : 0), 0
+  );
 
   return {
     overall,
@@ -236,7 +269,9 @@ function calculateScores(scanResult, industry) {
     totalViolations: violations.length,
     totalViolationNodes: Object.values(severityBreakdown).reduce((a, b) => a + b, 0),
     totalPasses: passes.length,
+    totalIncomplete: incomplete.length,
+    totalIncompleteNodes,
   };
 }
 
-module.exports = { calculateScores };
+module.exports = { calculateScores, calculateOverallScore };

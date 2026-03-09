@@ -4,6 +4,7 @@
  */
 
 const path = require('path');
+const { calculateOverallScore } = require('../score');
 
 let remediationData = {};
 try {
@@ -14,6 +15,11 @@ let falsePositives = {};
 try {
   falsePositives = require('../data/false-positives.json');
 } catch { /* false-positives data not available */ }
+
+let wcagMap = {};
+try {
+  wcagMap = require('../data/wcag-map.json');
+} catch { /* wcag-map data not available */ }
 
 // ---------------------------------------------------------------------------
 // Helper utilities
@@ -45,6 +51,33 @@ function extractWcagCriteria(tags) {
       return `${digits[0]}.${digits[1]}.${digits.slice(2)}`;
     })
     .join(', ');
+}
+
+/**
+ * Look up WCAG success criterion details from axe-core tags.
+ * Returns array of { sc, name, level, principle, guideline, legalRelevance, description }.
+ */
+function getWcagDetails(tags) {
+  if (!tags || !wcagMap || Object.keys(wcagMap).length === 0) return [];
+  const criteria = tags
+    .filter((tag) => /^wcag\d{3,}$/.test(tag))
+    .map((tag) => {
+      const digits = tag.replace('wcag', '');
+      return `${digits[0]}.${digits[1]}.${digits.slice(2)}`;
+    });
+  const details = [];
+  const seen = new Set();
+  for (const sc of criteria) {
+    if (seen.has(sc)) continue;
+    seen.add(sc);
+    const info = wcagMap[sc];
+    if (info) {
+      details.push({ sc, ...info });
+    } else {
+      details.push({ sc, name: sc, level: '?', principle: '', guideline: '', legalRelevance: '', description: '' });
+    }
+  }
+  return details;
 }
 
 /**
@@ -180,6 +213,85 @@ function severityPriority(severity) {
   return map[severity] != null ? map[severity] : 4;
 }
 
+/**
+ * Extract base64 image data from a screenshot object (handles both old and new format).
+ */
+function extractImgData(shot) {
+  if (!shot) return null;
+  if (typeof shot === 'string') return shot;
+  if (typeof shot === 'object' && shot.base64) return shot.base64;
+  return null;
+}
+
+/**
+ * Render screenshot(s) for a page, supporting multi-region captures.
+ */
+function renderScreenshots(desktopShot, mobileShot, pageUrl) {
+  let html = '';
+  const desktopImg = extractImgData(desktopShot);
+  const mobileImg = extractImgData(mobileShot);
+  const desktopRegions = (desktopShot && typeof desktopShot === 'object' && desktopShot.regions) || [];
+  const mobileRegions = (mobileShot && typeof mobileShot === 'object' && mobileShot.regions) || [];
+
+  // Primary screenshots (desktop + mobile side by side)
+  if (desktopImg || mobileImg) {
+    html += '<div style="display:flex; gap:16px; flex-wrap:wrap; margin:16px 0;">';
+    if (desktopImg) {
+      html += `
+        <div class="screenshot-container" style="flex:1; min-width:300px;">
+          <p style="font-weight:600; margin-bottom:8px;">Desktop View (1280px)</p>
+          <img src="data:image/png;base64,${desktopImg}" alt="Desktop annotated screenshot of ${escapeHtml(pageUrl)}">
+        </div>`;
+    }
+    if (mobileImg) {
+      html += `
+        <div class="screenshot-container" style="flex:0 0 auto; max-width:375px;">
+          <p style="font-weight:600; margin-bottom:8px;">Mobile View (375px)</p>
+          <img src="data:image/png;base64,${mobileImg}" alt="Mobile annotated screenshot of ${escapeHtml(pageUrl)}">
+        </div>`;
+    }
+    html += '</div>';
+  }
+
+  // Additional region screenshots (desktop)
+  if (desktopRegions.length > 1) {
+    html += '<details><summary>Additional Desktop Regions (' + desktopRegions.length + ' captured)</summary>';
+    for (let i = 1; i < desktopRegions.length; i++) {
+      const region = desktopRegions[i];
+      if (!region.base64) continue;
+      html += `
+        <div class="screenshot-container" style="margin:12px 0;">
+          <p style="font-weight:600; margin-bottom:8px; font-size:0.9rem;">
+            ${escapeHtml(region.label || 'Region ' + (i + 1))}
+            (${region.violationCount || 0} violation${region.violationCount !== 1 ? 's' : ''})
+          </p>
+          <img src="data:image/png;base64,${region.base64}" alt="Desktop region ${i + 1} of ${escapeHtml(pageUrl)}">
+        </div>`;
+    }
+    html += '</details>';
+  }
+
+  // Additional region screenshots (mobile)
+  if (mobileRegions.length > 1) {
+    html += '<details><summary>Additional Mobile Regions (' + mobileRegions.length + ' captured)</summary>';
+    for (let i = 1; i < mobileRegions.length; i++) {
+      const region = mobileRegions[i];
+      if (!region.base64) continue;
+      html += `
+        <div class="screenshot-container" style="margin:12px 0; max-width:375px;">
+          <p style="font-weight:600; margin-bottom:8px; font-size:0.9rem;">
+            ${escapeHtml(region.label || 'Region ' + (i + 1))}
+            (${region.violationCount || 0} violation${region.violationCount !== 1 ? 's' : ''})
+          </p>
+          <img src="data:image/png;base64,${region.base64}" alt="Mobile region ${i + 1} of ${escapeHtml(pageUrl)}">
+        </div>`;
+    }
+    html += '</details>';
+  }
+
+  return html;
+}
+
 // ---------------------------------------------------------------------------
 // CSS generation
 // ---------------------------------------------------------------------------
@@ -262,6 +374,54 @@ function generateStyles(accentColor) {
     .badge-moderate { background: #ca8a04; }
     .badge-minor { background: #2563eb; }
     .badge-pass { background: #16a34a; }
+    .badge-level-a { background: #6366f1; }
+    .badge-level-aa { background: #8b5cf6; }
+
+    /* WCAG SC detail block */
+    .wcag-sc-list { margin: 8px 0 12px; }
+    .wcag-sc-item {
+      display: flex; align-items: flex-start; gap: 10px;
+      padding: 8px 12px; margin: 4px 0; background: #f8fafc;
+      border: 1px solid #e2e8f0; border-radius: 6px; font-size: 0.88rem;
+    }
+    .wcag-sc-item .sc-number { font-weight: 700; white-space: nowrap; min-width: 40px; }
+    .wcag-sc-item .sc-name { font-weight: 600; }
+    .wcag-sc-item .sc-legal { color: #6b7280; font-size: 0.82rem; margin-top: 2px; }
+
+    /* Metric cards row */
+    .metrics-row {
+      display: flex; gap: 16px; flex-wrap: wrap; margin: 16px 0 24px;
+    }
+    .metric-card {
+      flex: 1; min-width: 140px; padding: 18px 16px; border-radius: 10px;
+      text-align: center; border: 1px solid #e5e7eb; background: #f9fafb;
+    }
+    .metric-card .metric-value { font-size: 2rem; font-weight: 800; line-height: 1.1; color: #0d0d0d; }
+    .metric-card .metric-label { font-size: 0.82rem; color: #6b7280; margin-top: 4px; text-transform: uppercase; letter-spacing: 0.5px; }
+
+    /* Risk assessment */
+    .risk-badge {
+      display: inline-block; padding: 4px 14px; border-radius: 6px;
+      font-weight: 700; font-size: 0.9rem; color: #fff; text-transform: uppercase;
+      letter-spacing: 1px; vertical-align: middle;
+    }
+    .risk-high { background: #dc2626; }
+    .risk-moderate { background: #ca8a04; }
+    .risk-low { background: #16a34a; }
+
+    /* Priority action items */
+    .priority-list { list-style: none; padding: 0; margin: 12px 0; counter-reset: priority; }
+    .priority-list li {
+      counter-increment: priority; padding: 10px 14px 10px 48px; margin: 6px 0;
+      background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 8px;
+      position: relative; font-size: 0.92rem;
+    }
+    .priority-list li::before {
+      content: counter(priority); position: absolute; left: 14px; top: 10px;
+      width: 24px; height: 24px; border-radius: 50%; background: #1a1a2e;
+      color: #fff; font-size: 0.78rem; font-weight: 700;
+      display: flex; align-items: center; justify-content: center;
+    }
 
     /* Status text */
     .status-good { color: #16a34a; font-weight: 600; }
@@ -445,7 +605,7 @@ function renderCoverPage(scanResult, options) {
 /**
  * Section 2: Table of Contents
  */
-function renderTableOfContents() {
+function renderTableOfContents(scanResult) {
   const sections = [
     ['exec-summary', 'Executive Summary'],
     ['methodology', 'Audit Methodology'],
@@ -464,7 +624,20 @@ function renderTableOfContents() {
 
   let items = '';
   sections.forEach(([id, label], i) => {
-    items += `<li><span class="toc-number">${i + 1}.</span><a href="#${id}">${escapeHtml(label)}</a></li>\n`;
+    items += `<li><span class="toc-number">${i + 1}.</span><a href="#${id}">${escapeHtml(label)}</a>`;
+    // Add per-page sub-items under "Detailed Findings by Page"
+    if (id === 'detailed-findings-page') {
+      const pages = scanResult?.pages || [];
+      if (pages.length > 1) {
+        items += '<ul class="toc-list" style="margin-left:28px; margin-top:4px;">';
+        pages.forEach((page, pi) => {
+          const pagePath = safePathname(page.url);
+          items += `<li><a href="#page-${pi}">${escapeHtml(pagePath)}</a></li>`;
+        });
+        items += '</ul>';
+      }
+    }
+    items += '</li>\n';
   });
 
   return `
@@ -473,6 +646,11 @@ function renderTableOfContents() {
       ${items}
     </ol>
   `;
+}
+
+function safePathname(url) {
+  try { return new URL(url).pathname || '/'; }
+  catch { return url || '/'; }
 }
 
 /**
@@ -484,7 +662,43 @@ function renderExecutiveSummary(scanResult, scores) {
   if (overall >= 80) scoreBg = '#16a34a';
   else if (overall >= 50) scoreBg = '#ca8a04';
 
-  // Principle table rows
+  const violations = scanResult.allViolations || [];
+  const passes = scanResult.allPasses || [];
+  const sev = scores.severityBreakdown || { critical: 0, serious: 0, moderate: 0, minor: 0 };
+  const pageCount = scanResult.pageCount || (scanResult.pages || []).length || 1;
+  const totalNodes = scores.totalViolationNodes || 0;
+
+  // --- Risk Assessment ---
+  let riskLevel, riskClass, riskText;
+  if (sev.critical > 0 || overall < 40) {
+    riskLevel = 'HIGH';
+    riskClass = 'risk-high';
+    riskText = 'This website presents a <strong>high risk</strong> of ADA non-compliance. Critical accessibility barriers were detected that may prevent users with disabilities from accessing core content and functionality. Immediate remediation is strongly recommended to reduce legal exposure and improve user access.';
+  } else if (sev.serious > 0 || overall < 70) {
+    riskLevel = 'MODERATE';
+    riskClass = 'risk-moderate';
+    riskText = 'This website presents a <strong>moderate risk</strong> of ADA non-compliance. Serious accessibility issues were detected that create significant barriers for some users with disabilities. Targeted remediation of the highest-severity issues is recommended within the near term.';
+  } else {
+    riskLevel = 'LOW';
+    riskClass = 'risk-low';
+    riskText = 'This website presents a <strong>low risk</strong> of ADA non-compliance. No critical or serious barriers were detected. Minor improvements may further enhance the experience for users with disabilities.';
+  }
+
+  // --- Estimated Fix Time ---
+  let estimatedMinutes = 0;
+  for (const v of violations) {
+    const nodeCount = (v.nodes || []).length;
+    const imp = v.impact || 'minor';
+    // Rough per-node estimate: critical=15min, serious=10min, moderate=7min, minor=5min
+    const perNode = imp === 'critical' ? 15 : imp === 'serious' ? 10 : imp === 'moderate' ? 7 : 5;
+    estimatedMinutes += nodeCount * perNode;
+  }
+  let fixTimeStr;
+  if (estimatedMinutes === 0) fixTimeStr = '0 hrs';
+  else if (estimatedMinutes < 60) fixTimeStr = `~${estimatedMinutes} min`;
+  else fixTimeStr = `~${Math.round(estimatedMinutes / 60)} hrs`;
+
+  // --- Principle table rows ---
   let principleRows = '';
   for (const [name, data] of Object.entries(scores.byPrinciple || {})) {
     let statusClass = 'status-good';
@@ -498,13 +712,35 @@ function renderExecutiveSummary(scanResult, scores) {
       </tr>`;
   }
 
-  // Benchmark
+  // --- Benchmark ---
   const benchmarkSummary = scores.benchmarkContext
     ? escapeHtml(scores.benchmarkContext.summary)
     : 'Benchmark data not available.';
 
-  // Top strengths (up to 5 passed rules)
-  const passes = scanResult.allPasses || [];
+  // --- Industry comparison ---
+  let benchmarks;
+  try { benchmarks = require('../data/benchmarks.json'); } catch { benchmarks = null; }
+  let industryComparisonHtml = '';
+  if (benchmarks && benchmarks.percentile_thresholds) {
+    const pt = benchmarks.percentile_thresholds;
+    let percentileLabel = '';
+    if (overall >= pt.top_1_percent) percentileLabel = 'Top 1%';
+    else if (overall >= pt.top_5_percent) percentileLabel = 'Top 5%';
+    else if (overall >= pt.top_10_percent) percentileLabel = 'Top 10%';
+    else if (overall >= pt.top_25_percent) percentileLabel = 'Top 25%';
+    else if (overall >= pt.median) percentileLabel = 'Above Median';
+    else if (overall >= pt.bottom_25_percent) percentileLabel = 'Below Median';
+    else percentileLabel = 'Bottom 10%';
+
+    industryComparisonHtml = `
+      <p>Based on the <strong>WebAIM Million 2025</strong> dataset (1,000,000 homepages analyzed),
+      your score of <strong>${overall}/100</strong> places you in the <strong>${escapeHtml(percentileLabel)}</strong>
+      of all websites. The industry median is <strong>${pt.median}/100</strong>, and
+      <strong>${benchmarks.failure_rate}%</strong> of homepages have detectable WCAG failures
+      (average of ${benchmarks.average_errors_per_page} errors per page).</p>`;
+  }
+
+  // --- Top strengths ---
   const topStrengths = passes.slice(0, 5);
   let strengthsList = '';
   if (topStrengths.length > 0) {
@@ -515,8 +751,7 @@ function renderExecutiveSummary(scanResult, scores) {
     strengthsList = '<p>No passed checks recorded.</p>';
   }
 
-  // Top critical issues (up to 5, sorted by severity)
-  const violations = scanResult.allViolations || [];
+  // --- Top critical issues ---
   const sorted = [...violations].sort((a, b) => severityPriority(a.impact) - severityPriority(b.impact));
   const topIssues = sorted.slice(0, 5);
   let issuesList = '';
@@ -531,6 +766,32 @@ function renderExecutiveSummary(scanResult, scores) {
     issuesList = '<p>No violations found.</p>';
   }
 
+  // --- Priority actions (top 3-5) ---
+  const priorityActions = sorted.slice(0, 5);
+  let priorityHtml = '';
+  if (priorityActions.length > 0) {
+    priorityHtml = '<ol class="priority-list">';
+    for (const v of priorityActions) {
+      const nodeCount = (v.nodes || []).length;
+      const wcagDetails = getWcagDetails(v.tags);
+      const scLabel = wcagDetails.length > 0
+        ? wcagDetails.map((d) => `WCAG ${d.sc} (${d.name})`).join(', ')
+        : '';
+      const effort = estimateEffort(v.id, nodeCount);
+      priorityHtml += `
+        <li>
+          <strong>${escapeHtml(v.help || v.id)}</strong>
+          <span class="badge badge-${v.impact || 'minor'}" style="margin-left:6px;">${escapeHtml(v.impact || 'minor')}</span>
+          <br><span style="color:#6b7280;font-size:0.85rem;">
+            ${nodeCount} element${nodeCount !== 1 ? 's' : ''} affected
+            ${scLabel ? ' &mdash; ' + escapeHtml(scLabel) : ''}
+            &mdash; Effort: ${escapeHtml(typeof effort === 'string' ? effort : 'Medium')}
+          </span>
+        </li>`;
+    }
+    priorityHtml += '</ol>';
+  }
+
   return `
     <h2 class="section-heading" id="exec-summary">Executive Summary</h2>
 
@@ -542,6 +803,30 @@ function renderExecutiveSummary(scanResult, scores) {
       </div>
     </div>
 
+    <h3 class="sub-heading">Risk Assessment</h3>
+    <p><span class="risk-badge ${riskClass}">${riskLevel} RISK</span></p>
+    <p>${riskText}</p>
+
+    <h3 class="sub-heading">Key Metrics</h3>
+    <div class="metrics-row">
+      <div class="metric-card">
+        <div class="metric-value">${pageCount}</div>
+        <div class="metric-label">Pages Scanned</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-value">${violations.length}</div>
+        <div class="metric-label">Violations</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-value">${totalNodes}</div>
+        <div class="metric-label">Elements Affected</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-value">${fixTimeStr}</div>
+        <div class="metric-label">Est. Fix Time</div>
+      </div>
+    </div>
+
     <h3 class="sub-heading">Score Breakdown by WCAG Principle</h3>
     <table>
       <thead><tr><th>Principle</th><th>Score</th><th>Status</th></tr></thead>
@@ -550,6 +835,9 @@ function renderExecutiveSummary(scanResult, scores) {
 
     <h3 class="sub-heading">Industry Benchmark</h3>
     <p>${benchmarkSummary}</p>
+    ${industryComparisonHtml}
+
+    ${priorityActions.length > 0 ? '<h3 class="sub-heading">Recommended Priority Actions</h3>' + priorityHtml : ''}
 
     <h3 class="sub-heading">Top Strengths</h3>
     ${strengthsList}
@@ -773,6 +1061,7 @@ function renderViolationCard(violation) {
   const impact = violation.impact || 'minor';
   const nodes = violation.nodes || [];
   const wcag = extractWcagCriteria(violation.tags);
+  const wcagDetails = getWcagDetails(violation.tags);
   const viewport = violation._viewport || 'both';
   const ruleId = violation.id;
   const remediation = remediationData[ruleId];
@@ -796,8 +1085,26 @@ function renderViolationCard(violation) {
         </tr></tbody>
       </table>
 
-      <p>${escapeHtml(violation.description || '')}</p>
-  `;
+      <p>${escapeHtml(violation.description || '')}</p>`;
+
+  // WCAG Success Criterion details
+  if (wcagDetails.length > 0) {
+    html += '<div class="wcag-sc-list">';
+    for (const sc of wcagDetails) {
+      const levelClass = sc.level === 'AA' ? 'badge-level-aa' : 'badge-level-a';
+      html += `
+        <div class="wcag-sc-item">
+          <span class="sc-number">${escapeHtml(sc.sc)}</span>
+          <span class="badge ${levelClass}">Level ${escapeHtml(sc.level)}</span>
+          <div>
+            <span class="sc-name">${escapeHtml(sc.name)}</span>
+            <span style="color:#6b7280;"> &mdash; ${escapeHtml(sc.guideline)}</span>
+            ${sc.legalRelevance ? `<div class="sc-legal">${escapeHtml(sc.legalRelevance)}</div>` : ''}
+          </div>
+        </div>`;
+    }
+    html += '</div>';
+  }
 
   // "Why This Matters" block
   if (remediation && remediation.explanation) {
@@ -898,9 +1205,37 @@ function renderDetailedFindingsByPage(scanResult) {
 
   let html = `<h2 class="section-heading" id="detailed-findings-page">Detailed Findings by Page</h2>`;
 
-  for (const page of pages) {
+  // Page summary table (for multi-page scans)
+  if (pages.length > 1) {
+    html += `
+      <table>
+        <thead><tr><th>Page</th><th>Score</th><th>Violations</th><th>Critical</th><th>Serious</th></tr></thead>
+        <tbody>`;
+    pages.forEach((page, i) => {
+      const pageViolations = page.combined?.violations || [];
+      const pagePasses = page.combined?.passes || [];
+      const pageScore = calculateOverallScore(pageViolations, pagePasses);
+      let scoreBg = '#dc2626';
+      if (pageScore >= 80) scoreBg = '#16a34a';
+      else if (pageScore >= 50) scoreBg = '#ca8a04';
+      const critCount = countBySeverity(pageViolations, 'critical');
+      const seriousCount = countBySeverity(pageViolations, 'serious');
+      html += `
+        <tr>
+          <td><a href="#page-${i}">${escapeHtml(safePathname(page.url))}</a></td>
+          <td><span style="color:${scoreBg};font-weight:700;">${pageScore}/100</span></td>
+          <td>${pageViolations.length}</td>
+          <td>${critCount > 0 ? '<span class="badge badge-critical">' + critCount + '</span>' : '0'}</td>
+          <td>${seriousCount > 0 ? '<span class="badge badge-serious">' + seriousCount + '</span>' : '0'}</td>
+        </tr>`;
+    });
+    html += '</tbody></table>';
+  }
+
+  pages.forEach((page, pageIndex) => {
     const pageUrl = page.url || 'Unknown';
     const violations = page.combined?.violations || [];
+    const passes = page.combined?.passes || [];
     const sevCounts = { critical: 0, serious: 0, moderate: 0, minor: 0 };
 
     for (const v of violations) {
@@ -910,14 +1245,33 @@ function renderDetailedFindingsByPage(scanResult) {
       }
     }
 
+    // Per-page score
+    const pageScore = calculateOverallScore(violations, passes);
+    let scoreBg = '#dc2626';
+    if (pageScore >= 80) scoreBg = '#16a34a';
+    else if (pageScore >= 50) scoreBg = '#ca8a04';
+
+    const totalElements = Object.values(sevCounts).reduce((a, b) => a + b, 0);
+
     html += `
-      <h3 class="sub-heading">${escapeHtml(pageUrl)}</h3>
-      <p><strong>${violations.length}</strong> violation${violations.length !== 1 ? 's' : ''} found &mdash;
-        <span class="badge badge-critical">Critical: ${sevCounts.critical}</span>
-        <span class="badge badge-serious">Serious: ${sevCounts.serious}</span>
-        <span class="badge badge-moderate">Moderate: ${sevCounts.moderate}</span>
-        <span class="badge badge-minor">Minor: ${sevCounts.minor}</span>
-      </p>
+      <h3 class="sub-heading" id="page-${pageIndex}">${escapeHtml(pageUrl)}</h3>
+
+      <div style="display:flex; align-items:center; gap:16px; margin-bottom:16px; flex-wrap:wrap;">
+        <div style="text-align:center; padding:12px 24px; border-radius:10px; background:${scoreBg}; color:#fff; min-width:80px;">
+          <div style="font-size:1.8rem; font-weight:800; line-height:1;">${pageScore}</div>
+          <div style="font-size:0.75rem; opacity:0.9;">/ 100</div>
+        </div>
+        <div>
+          <p style="margin:0;"><strong>${violations.length}</strong> violation${violations.length !== 1 ? 's' : ''}
+            affecting <strong>${totalElements}</strong> element${totalElements !== 1 ? 's' : ''}</p>
+          <p style="margin:4px 0 0;">
+            <span class="badge badge-critical">Critical: ${sevCounts.critical}</span>
+            <span class="badge badge-serious">Serious: ${sevCounts.serious}</span>
+            <span class="badge badge-moderate">Moderate: ${sevCounts.moderate}</span>
+            <span class="badge badge-minor">Minor: ${sevCounts.minor}</span>
+          </p>
+        </div>
+      </div>
     `;
 
     // Compact violation list
@@ -933,46 +1287,30 @@ function renderDetailedFindingsByPage(scanResult) {
           </div>`;
       }
       html += '</div>';
+    } else {
+      html += '<p style="color:#16a34a; font-weight:600;">No violations detected on this page.</p>';
     }
 
-    // Screenshots — embed both desktop and mobile if available
+    // Screenshots — embed desktop and mobile, with multi-region support
     const desktopShot = page.desktop?.screenshot;
     const mobileShot = page.mobile?.screenshot;
 
     if (desktopShot || mobileShot) {
-      html += '<div style="display:flex; gap:16px; flex-wrap:wrap; margin:16px 0;">';
-
-      if (desktopShot) {
-        const imgData = typeof desktopShot === 'object' && desktopShot.base64
-          ? desktopShot.base64
-          : (typeof desktopShot === 'string' ? desktopShot : null);
-        if (imgData) {
-          html += `
-            <div class="screenshot-container" style="flex:1; min-width:300px;">
-              <p style="font-weight:600; margin-bottom:8px;">Desktop View (1280px)</p>
-              <img src="data:image/png;base64,${imgData}" alt="Desktop annotated screenshot of ${escapeHtml(pageUrl)}">
-            </div>`;
-        }
-      }
-
-      if (mobileShot) {
-        const imgData = typeof mobileShot === 'object' && mobileShot.base64
-          ? mobileShot.base64
-          : (typeof mobileShot === 'string' ? mobileShot : null);
-        if (imgData) {
-          html += `
-            <div class="screenshot-container" style="flex:0 0 auto; max-width:375px;">
-              <p style="font-weight:600; margin-bottom:8px;">Mobile View (375px)</p>
-              <img src="data:image/png;base64,${imgData}" alt="Mobile annotated screenshot of ${escapeHtml(pageUrl)}">
-            </div>`;
-        }
-      }
-
-      html += '</div>';
+      html += renderScreenshots(desktopShot, mobileShot, pageUrl);
     }
-  }
+  });
 
   return html;
+}
+
+function countBySeverity(violations, severity) {
+  let count = 0;
+  for (const v of violations) {
+    for (const n of (v.nodes || [])) {
+      if ((n.impact || v.impact || 'minor') === severity) count++;
+    }
+  }
+  return count;
 }
 
 /**
@@ -1479,7 +1817,7 @@ function generateHtml(scanResult, scores, options = {}) {
 
   const sections = [
     renderCoverPage(scanResult, options),
-    renderTableOfContents(),
+    renderTableOfContents(scanResult),
     renderExecutiveSummary(scanResult, scores),
     renderMethodology(scanResult),
     renderComplianceOverview(scanResult, scores),

@@ -1,11 +1,29 @@
 /**
  * Scanner engine — per-page WCAG scanning with dual viewport + pop-up handling.
  * Uses isolated browser contexts and defensive page loading.
+ *
+ * Phase 2 improvements:
+ * - Request interception: blocks non-essential resources (images, fonts, media)
+ * - Optimized page loading: 2 page loads per URL (was 4) — scan then dismiss on same page
+ * - Retry with exponential backoff: 2 retries with 2s/4s delays
+ * - Smarter popup dismissal: verifies parent is modal/overlay before clicking
  */
 
 const puppeteer = require('puppeteer');
 const { AxePuppeteer } = require('@axe-core/puppeteer');
 const { captureAnnotatedScreenshot } = require('./screenshotter');
+const { applyConfidenceScores } = require('./confidence');
+
+// Resource types to block during scanning (keeps scripts + stylesheets for axe-core)
+const BLOCKED_RESOURCE_TYPES = new Set([
+  'image', 'font', 'media', 'beacon', 'csp_report', 'ping', 'imageset',
+]);
+
+// Tracker/ad domains to block for faster, cleaner scans
+const BLOCKED_DOMAINS = [
+  'google-analytics.com', 'googletagmanager.com', 'doubleclick.net',
+  'facebook.net', 'hotjar.com', 'analytics.', 'tracking.',
+];
 
 // Common dismiss/close selectors (prefer close/dismiss over accept)
 const DISMISS_SELECTORS = [
@@ -31,6 +49,62 @@ const VIEWPORTS = {
   desktop: { width: 1280, height: 900 },
   mobile: { width: 375, height: 812 },
 };
+
+// ---------------------------------------------------------------------------
+// Utility: retry with exponential backoff
+// ---------------------------------------------------------------------------
+
+/**
+ * Retry an async function with exponential backoff.
+ * @param {Function} fn - Async function to retry
+ * @param {number} maxRetries - Maximum number of retries (default: 2)
+ * @param {number} baseDelay - Base delay in ms (default: 2000)
+ */
+async function withRetry(fn, maxRetries = 2, baseDelay = 2000) {
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      if (attempt === maxRetries) throw err;
+      const delay = baseDelay * Math.pow(2, attempt); // 2s, 4s
+      console.warn(`    Retry ${attempt + 1}/${maxRetries} after ${delay}ms: ${err.message}`);
+      await new Promise((r) => setTimeout(r, delay));
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Request interception
+// ---------------------------------------------------------------------------
+
+/**
+ * Enable request interception on a page to block non-essential resources.
+ * Blocks images, fonts, media, beacons, and known tracker domains.
+ * Keeps scripts and stylesheets (needed by axe-core for computed styles).
+ */
+async function enableRequestInterception(page) {
+  await page.setRequestInterception(true);
+  page.on('request', (req) => {
+    const resourceType = req.resourceType();
+    const url = req.url();
+
+    if (BLOCKED_RESOURCE_TYPES.has(resourceType)) {
+      req.abort();
+      return;
+    }
+
+    if (BLOCKED_DOMAINS.some((domain) => url.includes(domain))) {
+      req.abort();
+      return;
+    }
+
+    req.continue();
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Defensive page loading
+// ---------------------------------------------------------------------------
 
 /**
  * Defensive page load strategy.
@@ -67,9 +141,50 @@ async function loadPageDefensively(page, url, timeout = 30000) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Popup / overlay dismissal (smarter: checks ancestor is modal/overlay)
+// ---------------------------------------------------------------------------
+
+/**
+ * Check if a button element is inside a modal/overlay/popup container.
+ * This prevents accidentally clicking dismiss buttons in regular page content.
+ */
+async function isInOverlayContainer(page, btn) {
+  try {
+    return await page.evaluate((el) => {
+      let parent = el.parentElement;
+      while (parent && parent !== document.body) {
+        const style = window.getComputedStyle(parent);
+        const role = parent.getAttribute('role');
+        const tagName = parent.tagName.toLowerCase();
+        const classList = parent.classList ? parent.classList.toString() : '';
+
+        const isOverlay =
+          // ARIA dialog roles
+          role === 'dialog' || role === 'alertdialog' ||
+          // HTML dialog element
+          tagName === 'dialog' ||
+          // Common overlay class names
+          /modal|overlay|popup|cookie|consent|banner|dialog|drawer|lightbox/i.test(classList) ||
+          // Common overlay ID patterns
+          (parent.id && /modal|overlay|popup|cookie|consent|banner|dialog/i.test(parent.id)) ||
+          // Fixed/absolute positioned elements with high z-index (common for overlays)
+          (style.position === 'fixed' && parseInt(style.zIndex, 10) > 10) ||
+          (style.position === 'absolute' && parseInt(style.zIndex, 10) > 100);
+
+        if (isOverlay) return true;
+        parent = parent.parentElement;
+      }
+      return false;
+    }, btn);
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Try to dismiss overlays/popups on the page.
- * Prefers close/dismiss over accept.
+ * Prefers close/dismiss over accept. Verifies button is inside an overlay.
  * Returns true if something was dismissed.
  */
 async function tryDismissOverlays(page) {
@@ -84,7 +199,8 @@ async function tryDismissOverlays(page) {
           const style = window.getComputedStyle(el);
           return style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0';
         }, btn);
-        if (isVisible) {
+        const inOverlay = await isInOverlayContainer(page, btn);
+        if (isVisible && inOverlay) {
           await btn.click();
           dismissed = true;
           await new Promise((r) => setTimeout(r, 500));
@@ -106,6 +222,8 @@ async function tryDismissOverlays(page) {
             const style = window.getComputedStyle(el);
             return style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0';
           }, btn);
+          // Accept selectors (cookie banners) are more reliably overlays,
+          // so only check visibility, not overlay container
           if (isVisible) {
             await btn.click();
             dismissed = true;
@@ -122,61 +240,37 @@ async function tryDismissOverlays(page) {
   return dismissed;
 }
 
+// ---------------------------------------------------------------------------
+// axe-core analysis
+// ---------------------------------------------------------------------------
+
 /**
  * Run axe-core analysis on a page.
+ * @param {import('puppeteer').Page} page
+ * @param {string[]} tags - WCAG tags to test
+ * @param {object} [axeConfig] - Optional axe-core configuration
  */
-async function runAxeAnalysis(page, tags) {
-  const results = await new AxePuppeteer(page)
-    .withTags(tags)
-    .analyze();
+async function runAxeAnalysis(page, tags, axeConfig = {}) {
+  let builder = new AxePuppeteer(page).withTags(tags);
+
+  // Apply optional axe-core configuration
+  if (axeConfig.disableRules && axeConfig.disableRules.length) {
+    builder = builder.disableRules(axeConfig.disableRules);
+  }
+  if (axeConfig.include) {
+    builder = builder.include(axeConfig.include);
+  }
+  if (axeConfig.exclude) {
+    builder = builder.exclude(axeConfig.exclude);
+  }
+
+  const results = await builder.analyze();
   return results;
 }
 
-/**
- * Scan a single page in a single viewport at a single state.
- * Uses an isolated browser context.
- *
- * @param {import('puppeteer').Browser} browser
- * @param {string} url
- * @param {object} viewport - { width, height }
- * @param {string[]} tags - WCAG tags to test
- * @param {number} timeout
- * @param {boolean} dismissOverlays - whether to dismiss popups before scanning
- * @returns {Promise<{results: object, screenshot: object|null, state: string}>}
- */
-async function scanPageState(browser, url, viewport, tags, timeout, dismissOverlays) {
-  const context = await browser.createBrowserContext();
-  let screenshot = null;
-
-  try {
-    const page = await context.newPage();
-    await page.setBypassCSP(true);
-    await page.setViewport(viewport);
-
-    await loadPageDefensively(page, url, timeout);
-
-    if (dismissOverlays) {
-      await tryDismissOverlays(page);
-      // Wait for DOM to settle after dismissal
-      await new Promise((r) => setTimeout(r, 500));
-    }
-
-    const results = await runAxeAnalysis(page, tags);
-
-    // Capture screenshot while page is still open (only for pages with violations)
-    if (results.violations && results.violations.length > 0) {
-      screenshot = await captureAnnotatedScreenshot(page, results.violations);
-    }
-
-    return {
-      results,
-      screenshot,
-      state: dismissOverlays ? 'after-dismissal' : 'with-overlays',
-    };
-  } finally {
-    await context.close();
-  }
-}
+// ---------------------------------------------------------------------------
+// Violation merging
+// ---------------------------------------------------------------------------
 
 /**
  * Merge violation arrays from two scan states, deduplicating by rule ID + node target.
@@ -213,8 +307,167 @@ function mergeViolations(withOverlays, afterDismissal) {
   return Array.from(merged.values());
 }
 
+// ---------------------------------------------------------------------------
+// Interactive state scanning (accordions, tabs, details/summary)
+// ---------------------------------------------------------------------------
+
 /**
- * Scan a single page at both viewports with pop-up handling.
+ * Scan interactive states by expanding collapsed content and re-scanning.
+ * Finds violations hidden inside accordions, tabs, details, and expandable regions.
+ *
+ * @param {import('puppeteer').Page} page
+ * @param {string[]} tags - WCAG tags to test
+ * @param {object} axeConfig - Optional axe-core configuration
+ * @returns {Promise<Array>} Additional violations found in expanded states
+ */
+async function scanInteractiveStates(page, tags, axeConfig = {}) {
+  const MAX_INTERACTIONS = 10;
+  const additionalViolations = [];
+
+  // Selectors for collapsed/expandable elements
+  const interactiveSelectors = [
+    '[aria-expanded="false"]',
+    'details:not([open])',
+    '[role="tab"][aria-selected="false"]',
+    'button[data-toggle]:not(.active)',
+    '[role="button"][aria-expanded="false"]',
+  ];
+
+  try {
+    // Find all expandable elements (up to MAX_INTERACTIONS)
+    const elements = await page.evaluate((selectors, max) => {
+      const found = [];
+      for (const selector of selectors) {
+        const els = document.querySelectorAll(selector);
+        for (const el of els) {
+          if (found.length >= max) break;
+          const rect = el.getBoundingClientRect();
+          const style = window.getComputedStyle(el);
+          // Only include visible, interactable elements
+          if (rect.width > 0 && rect.height > 0 &&
+              style.display !== 'none' && style.visibility !== 'hidden') {
+            // Generate a unique selector path for this element
+            let path = el.tagName.toLowerCase();
+            if (el.id) path = `#${el.id}`;
+            else if (el.className && typeof el.className === 'string') {
+              path += '.' + el.className.trim().split(/\s+/).join('.');
+            }
+            found.push({ selector: path, index: found.length });
+          }
+        }
+        if (found.length >= max) break;
+      }
+      return found;
+    }, interactiveSelectors, MAX_INTERACTIONS);
+
+    if (elements.length === 0) return [];
+
+    console.log(`    [interactive] Found ${elements.length} expandable element(s), scanning...`);
+
+    // Click each element and scan for new violations
+    for (const elem of elements) {
+      try {
+        // Try to click the element
+        const handle = await page.$(elem.selector);
+        if (!handle) continue;
+
+        await handle.click();
+        await new Promise((r) => setTimeout(r, 500)); // Wait for animation/expansion
+
+        // Re-scan after expansion
+        const results = await runAxeAnalysis(page, tags, axeConfig);
+
+        // Collect new violations and tag them
+        for (const v of (results.violations || [])) {
+          v._source = 'interactive';
+          v._expandedFrom = elem.selector;
+          additionalViolations.push(v);
+        }
+      } catch {
+        // Element not clickable or scan failed — skip
+      }
+    }
+  } catch (err) {
+    console.warn(`    [interactive] Error during interactive scanning: ${err.message}`);
+  }
+
+  return additionalViolations;
+}
+
+// ---------------------------------------------------------------------------
+// Optimized per-viewport scanning (loads page ONCE, scans twice)
+// ---------------------------------------------------------------------------
+
+/**
+ * Scan a single page at a single viewport. Loads the page once, runs axe,
+ * then dismisses overlays and re-runs axe on the same page.
+ * This replaces the old approach of loading the page 4 times per URL.
+ *
+ * @param {import('puppeteer').Browser} browser
+ * @param {string} url
+ * @param {object} viewport - { width, height }
+ * @param {string[]} tags - WCAG tags to test
+ * @param {number} timeout
+ * @param {object} [axeConfig] - Optional axe-core configuration
+ * @param {boolean} [interactive=false] - Scan interactive states
+ * @returns {Promise<object>} viewport scan result
+ */
+async function scanViewport(browser, url, viewport, tags, timeout, axeConfig = {}, interactive = false) {
+  const context = await browser.createBrowserContext();
+
+  try {
+    const page = await context.newPage();
+    await enableRequestInterception(page);
+    await page.setBypassCSP(true);
+    await page.setViewport(viewport);
+
+    await loadPageDefensively(page, url, timeout);
+
+    // State 1: Scan with overlays present
+    const results1 = await runAxeAnalysis(page, tags, axeConfig);
+
+    // State 2: Dismiss overlays on the SAME page, then re-scan
+    await tryDismissOverlays(page);
+    await new Promise((r) => setTimeout(r, 500));
+    const results2 = await runAxeAnalysis(page, tags, axeConfig);
+
+    // Merge violations from both states
+    let violations = mergeViolations(results1.violations, results2.violations);
+
+    // Interactive state scanning (accordions, tabs, details)
+    if (interactive) {
+      const interactiveViolations = await scanInteractiveStates(page, tags, axeConfig);
+      if (interactiveViolations.length > 0) {
+        violations = mergeViolations(violations, interactiveViolations);
+      }
+    }
+
+    // Capture screenshot after dismissal (more useful — shows the real page)
+    let screenshot = null;
+    if (violations.length > 0) {
+      screenshot = await captureAnnotatedScreenshot(page, violations);
+    }
+
+    return {
+      violations,
+      passes: results2.passes || [],
+      incomplete: results2.incomplete || [],
+      inapplicable: results2.inapplicable || [],
+      screenshot,
+      testEngine: results2.testEngine,
+      testEnvironment: results2.testEnvironment,
+    };
+  } finally {
+    await context.close();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Per-page scanning (dual viewport)
+// ---------------------------------------------------------------------------
+
+/**
+ * Scan a single page at both viewports with pop-up handling and retry logic.
  *
  * @param {import('puppeteer').Browser} browser
  * @param {string} url
@@ -225,6 +478,8 @@ async function scanPage(browser, url, options = {}) {
   const {
     tags = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'],
     timeout = 30000,
+    axeConfig = {},
+    interactive = false,
   } = options;
 
   const pageResult = {
@@ -234,41 +489,32 @@ async function scanPage(browser, url, options = {}) {
     combined: { violations: [], passes: [], incomplete: [], inapplicable: [] },
   };
 
-  // --- Desktop scans ---
+  // --- Desktop scan (with retry) ---
   try {
-    // State 1: With overlays
-    const desktopState1 = await scanPageState(browser, url, VIEWPORTS.desktop, tags, timeout, false);
-    // State 2: After dismissal
-    const desktopState2 = await scanPageState(browser, url, VIEWPORTS.desktop, tags, timeout, true);
-
-    pageResult.desktop.violations = mergeViolations(
-      desktopState1.results.violations,
-      desktopState2.results.violations
+    const desktopResult = await withRetry(
+      () => scanViewport(browser, url, VIEWPORTS.desktop, tags, timeout, axeConfig, interactive)
     );
-    pageResult.desktop.passes = desktopState2.results.passes || [];
-    pageResult.desktop.incomplete = desktopState2.results.incomplete || [];
-    pageResult.desktop.inapplicable = desktopState2.results.inapplicable || [];
-    // Use after-dismissal screenshot (more useful — shows the real page)
-    pageResult.desktop.screenshot = desktopState2.screenshot || desktopState1.screenshot;
-    pageResult.desktop.testEngine = desktopState2.results.testEngine;
-    pageResult.desktop.testEnvironment = desktopState2.results.testEnvironment;
+    pageResult.desktop.violations = desktopResult.violations;
+    pageResult.desktop.passes = desktopResult.passes;
+    pageResult.desktop.incomplete = desktopResult.incomplete;
+    pageResult.desktop.inapplicable = desktopResult.inapplicable;
+    pageResult.desktop.screenshot = desktopResult.screenshot;
+    pageResult.desktop.testEngine = desktopResult.testEngine;
+    pageResult.desktop.testEnvironment = desktopResult.testEnvironment;
   } catch (err) {
     console.warn(`  Warning: Desktop scan failed for ${url}: ${err.message}`);
   }
 
-  // --- Mobile scans ---
+  // --- Mobile scan (with retry) ---
   try {
-    const mobileState1 = await scanPageState(browser, url, VIEWPORTS.mobile, tags, timeout, false);
-    const mobileState2 = await scanPageState(browser, url, VIEWPORTS.mobile, tags, timeout, true);
-
-    pageResult.mobile.violations = mergeViolations(
-      mobileState1.results.violations,
-      mobileState2.results.violations
+    const mobileResult = await withRetry(
+      () => scanViewport(browser, url, VIEWPORTS.mobile, tags, timeout, axeConfig, interactive)
     );
-    pageResult.mobile.passes = mobileState2.results.passes || [];
-    pageResult.mobile.incomplete = mobileState2.results.incomplete || [];
-    pageResult.mobile.inapplicable = mobileState2.results.inapplicable || [];
-    pageResult.mobile.screenshot = mobileState2.screenshot || mobileState1.screenshot;
+    pageResult.mobile.violations = mobileResult.violations;
+    pageResult.mobile.passes = mobileResult.passes;
+    pageResult.mobile.incomplete = mobileResult.incomplete;
+    pageResult.mobile.inapplicable = mobileResult.inapplicable;
+    pageResult.mobile.screenshot = mobileResult.screenshot;
   } catch (err) {
     console.warn(`  Warning: Mobile scan failed for ${url}: ${err.message}`);
   }
@@ -278,6 +524,10 @@ async function scanPage(browser, url, options = {}) {
 
   return pageResult;
 }
+
+// ---------------------------------------------------------------------------
+// Viewport result combination
+// ---------------------------------------------------------------------------
 
 /**
  * Combine desktop and mobile results, tagging each violation with its viewport(s).
@@ -328,6 +578,10 @@ function combineViewportResults(desktop, mobile) {
   };
 }
 
+// ---------------------------------------------------------------------------
+// Multi-page scanning
+// ---------------------------------------------------------------------------
+
 /**
  * Scan all discovered pages.
  *
@@ -339,6 +593,9 @@ async function scanAllPages(urls, options = {}) {
   const {
     tags = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'],
     timeout = 30000,
+    axeConfig = {},
+    interactive = false,
+    concurrency = 1,
     onProgress = null,
   } = options;
 
@@ -358,28 +615,39 @@ async function scanAllPages(urls, options = {}) {
   });
 
   const pageResults = [];
+  let completedCount = 0;
 
   try {
-    for (let i = 0; i < urls.length; i++) {
-      const url = urls[i];
-      console.log(`  Scanning page ${i + 1}/${urls.length}: ${url}`);
-      emit({ phase: 'scanning', current: i + 1, total: urls.length, url, message: `Scanning page ${i + 1}/${urls.length}: ${url}` });
+    // Process URLs in batches of `concurrency` size
+    for (let batchStart = 0; batchStart < urls.length; batchStart += concurrency) {
+      const batch = urls.slice(batchStart, batchStart + concurrency);
 
-      try {
-        const result = await scanPage(browser, url, { tags, timeout });
-        pageResults.push(result);
-        emit({ phase: 'page-done', current: i + 1, total: urls.length, url, violations: result.combined.violations.length });
-      } catch (err) {
-        console.warn(`  Error scanning ${url}: ${err.message}`);
-        emit({ phase: 'page-error', current: i + 1, total: urls.length, url, error: err.message });
-        pageResults.push({
-          url,
-          error: err.message,
-          desktop: { violations: [], passes: [], incomplete: [], inapplicable: [], screenshot: null },
-          mobile: { violations: [], passes: [], incomplete: [], inapplicable: [], screenshot: null },
-          combined: { violations: [], passes: [], incomplete: [], inapplicable: [] },
-        });
-      }
+      const batchPromises = batch.map(async (url, batchIndex) => {
+        const globalIndex = batchStart + batchIndex;
+        console.log(`  Scanning page ${globalIndex + 1}/${urls.length}: ${url}`);
+        emit({ phase: 'scanning', current: globalIndex + 1, total: urls.length, url, message: `Scanning page ${globalIndex + 1}/${urls.length}: ${url}` });
+
+        try {
+          const result = await scanPage(browser, url, { tags, timeout, axeConfig, interactive });
+          completedCount++;
+          emit({ phase: 'page-done', current: completedCount, total: urls.length, url, violations: result.combined.violations.length });
+          return result;
+        } catch (err) {
+          console.warn(`  Error scanning ${url}: ${err.message}`);
+          completedCount++;
+          emit({ phase: 'page-error', current: completedCount, total: urls.length, url, error: err.message });
+          return {
+            url,
+            error: err.message,
+            desktop: { violations: [], passes: [], incomplete: [], inapplicable: [], screenshot: null },
+            mobile: { violations: [], passes: [], incomplete: [], inapplicable: [], screenshot: null },
+            combined: { violations: [], passes: [], incomplete: [], inapplicable: [] },
+          };
+        }
+      });
+
+      const batchResults = await Promise.all(batchPromises);
+      pageResults.push(...batchResults);
     }
   } finally {
     await browser.close();
@@ -391,6 +659,14 @@ async function scanAllPages(urls, options = {}) {
   const scanDate = new Date().toISOString();
   const testEngine = pageResults.find((r) => r.desktop?.testEngine)?.desktop?.testEngine;
 
+  const allViolations = aggregateViolations(pageResults);
+
+  // Log iframe/shadow DOM violation context
+  logNestedViolationContext(allViolations);
+
+  // Apply confidence scoring to reduce false-positive noise
+  applyConfidenceScores(allViolations);
+
   return {
     url: urls[0],
     scannedUrls: urls,
@@ -401,11 +677,62 @@ async function scanAllPages(urls, options = {}) {
     pageCount: urls.length,
     pages: pageResults,
     // Aggregate combined violations across all pages
-    allViolations: aggregateViolations(pageResults),
+    allViolations,
     allPasses: aggregatePasses(pageResults),
     allIncomplete: aggregateIncomplete(pageResults),
   };
 }
+
+// ---------------------------------------------------------------------------
+// Iframe / Shadow DOM violation context logging
+// ---------------------------------------------------------------------------
+
+/**
+ * Detect and log violations found inside iframes or shadow DOM.
+ * axe-core modern mode returns nested target arrays for these:
+ * - iframe: target = [['iframe-selector'], ['element-in-iframe']]
+ * - shadow DOM: target = [['host-selector', 'shadow-element']]
+ *
+ * Tags each affected node with _context: 'iframe' | 'shadow-dom' | 'standard'.
+ */
+function logNestedViolationContext(violations) {
+  let iframeCount = 0;
+  let shadowDomCount = 0;
+
+  for (const v of violations) {
+    for (const node of (v.nodes || [])) {
+      const target = node.target;
+      if (!target) {
+        node._context = 'standard';
+        continue;
+      }
+
+      // axe-core nests iframe violations as arrays of arrays: [['iframe'], ['element']]
+      if (target.length > 1 && Array.isArray(target[0])) {
+        node._context = 'iframe';
+        iframeCount++;
+      }
+      // Shadow DOM targets contain nested arrays within a single entry: [['host', 'shadow-child']]
+      else if (target.length === 1 && Array.isArray(target[0]) && target[0].length > 1) {
+        node._context = 'shadow-dom';
+        shadowDomCount++;
+      } else {
+        node._context = 'standard';
+      }
+    }
+  }
+
+  if (iframeCount > 0) {
+    console.log(`  [iframe] Found ${iframeCount} violation node(s) inside iframes`);
+  }
+  if (shadowDomCount > 0) {
+    console.log(`  [shadow-dom] Found ${shadowDomCount} violation node(s) inside shadow DOM`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Aggregation functions
+// ---------------------------------------------------------------------------
 
 /**
  * Aggregate violations across all pages, merging by rule ID.

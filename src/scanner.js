@@ -190,17 +190,14 @@ async function waitForChallengeResolution(page, maxWaitMs = 15000) {
     try {
       return await page.evaluate(() => {
         const title = document.title.toLowerCase();
-        // Cloudflare challenge indicators
-        if (title.includes('just a moment') || title.includes('attention required')) return true;
-        // Cloudflare Turnstile / challenge iframe
-        if (document.querySelector('#challenge-running, #challenge-form, .cf-browser-verification')) return true;
-        // Meta refresh pointing to a challenge
+        // Cloudflare challenge — require strong indicators (title or DOM selectors)
+        const hasCfTitle = title.includes('just a moment') || title.includes('attention required');
+        const hasCfDom = !!document.querySelector('#challenge-running, #challenge-form, .cf-browser-verification, #cf-wrapper, .cf-error-details');
+        // Meta refresh only counts as Cloudflare if pointing to cdn-cgi (NOT generic meta-refresh)
         const metaRefresh = document.querySelector('meta[http-equiv="refresh"]');
-        if (metaRefresh) {
-          const content = metaRefresh.getAttribute('content') || '';
-          if (content.includes('challenge') || content.includes('cdn-cgi')) return true;
-        }
-        return false;
+        const hasCfMeta = metaRefresh && (metaRefresh.getAttribute('content') || '').includes('cdn-cgi');
+        // Must have at least one strong Cloudflare indicator
+        return hasCfTitle || hasCfDom || hasCfMeta;
       });
     } catch {
       return false;
@@ -633,21 +630,19 @@ async function scanInteractiveStates(page, tags, axeConfig = {}) {
  * @returns {Promise<Array>} Array of keyboard trap violations (axe-core format)
  */
 async function detectKeyboardTraps(page) {
-  const MAX_TABS = 80;
-  const TRAP_THRESHOLD = 3; // Same element focused 3 times WITHOUT focus moving elsewhere
+  const MAX_TABS = 50;
+  const TRAP_THRESHOLD = 3; // Same element at same position focused 3 times consecutively
 
   try {
     // Click body to reset focus to start of page
     await page.click('body').catch(() => {});
     await new Promise((r) => setTimeout(r, 100));
 
-    // Track ALL focus positions including nulls (body) to distinguish
-    // real traps from normal page cycling on pages with few focusable elements
-    const rawHistory = []; // includes null entries
     const traps = [];
     let consecutiveSame = 0;
-    let lastSelector = null;
+    let lastKey = null; // unique key = selector + position (distinguishes same-class elements)
     let lastInfo = null;
+    const uniqueElements = new Set(); // Track unique elements seen during tabbing
 
     for (let i = 0; i < MAX_TABS; i++) {
       await page.keyboard.press('Tab');
@@ -662,36 +657,76 @@ async function detectKeyboardTraps(page) {
         else if (el.className && typeof el.className === 'string' && el.className.trim()) {
           selector += '.' + el.className.trim().split(/\s+/).slice(0, 2).join('.');
         }
+        // Use absolute page position (not viewport-relative) to uniquely identify
+        // the element. Viewport-relative coords change as the browser auto-scrolls
+        // to focused elements, making different elements look like the same one.
+        const rect = el.getBoundingClientRect();
+        const absTop = Math.round(rect.top + window.scrollY);
+        const absLeft = Math.round(rect.left + window.scrollX);
+        const posKey = `${absTop}:${absLeft}`;
         return {
           selector,
+          posKey,
+          uniqueKey: selector + '@' + posKey,
           html: el.outerHTML.substring(0, 250),
         };
       });
 
-      const currentSelector = focusInfo?.selector || null;
-      rawHistory.push(currentSelector);
+      const currentKey = focusInfo?.uniqueKey || null;
 
-      // A real keyboard trap: focus STAYS on the same element for consecutive
-      // Tab presses without ever moving (not even to body/null between presses).
-      // Normal page cycling goes: elem1 → elem2 → ... → body → elem1 (focus
-      // moves through different elements and wraps via body).
-      if (currentSelector && currentSelector === lastSelector) {
+      if (currentKey) uniqueElements.add(currentKey);
+
+      // A real keyboard trap: focus STAYS on the exact same element (same
+      // selector AND same position) for consecutive Tab presses. Normal page
+      // cycling moves focus to different elements even if they share the same
+      // CSS class — their positions differ.
+      if (currentKey && currentKey === lastKey) {
         consecutiveSame++;
         lastInfo = focusInfo;
-        if (consecutiveSame >= TRAP_THRESHOLD) {
+        // Only declare trap if we've seen enough unique elements before it
+        // (pages with very few focusable elements can falsely trigger)
+        if (consecutiveSame >= TRAP_THRESHOLD && uniqueElements.size >= 3) {
           traps.push(focusInfo);
           break;
         }
       } else {
-        consecutiveSame = currentSelector ? 1 : 0;
-        lastSelector = currentSelector;
+        consecutiveSame = currentKey ? 1 : 0;
+        lastKey = currentKey;
         lastInfo = focusInfo;
       }
     }
 
     if (traps.length === 0) return [];
 
-    console.log(`    [keyboard-trap] Detected ${traps.length} keyboard trap(s)`);
+    // Verify trap: try Shift+Tab to see if focus escapes. A real trap holds
+    // focus even with Shift+Tab. If focus moves, it's a normal page wrap.
+    const verified = [];
+    for (const trap of traps) {
+      await page.keyboard.down('Shift');
+      await page.keyboard.press('Tab');
+      await page.keyboard.up('Shift');
+      const afterShift = await page.evaluate(() => {
+        const el = document.activeElement;
+        if (!el || el === document.body || el === document.documentElement) return null;
+        const rect = el.getBoundingClientRect();
+        const absTop = Math.round(rect.top + window.scrollY);
+        const absLeft = Math.round(rect.left + window.scrollX);
+        let sel = el.tagName.toLowerCase();
+        if (el.id) sel = '#' + el.id;
+        else if (el.className && typeof el.className === 'string' && el.className.trim()) {
+          sel += '.' + el.className.trim().split(/\s+/).slice(0, 2).join('.');
+        }
+        return sel + '@' + absTop + ':' + absLeft;
+      });
+      // If Shift+Tab moves focus to a different element, it's NOT a real trap
+      if (afterShift && afterShift === trap.uniqueKey) {
+        verified.push(trap);
+      }
+    }
+
+    if (verified.length === 0) return [];
+
+    console.log(`    [keyboard-trap] Detected ${verified.length} keyboard trap(s)`);
 
     return [{
       id: 'autoada-keyboard-trap',
@@ -702,7 +737,7 @@ async function detectKeyboardTraps(page) {
       helpUrl: 'https://www.w3.org/WAI/WCAG22/Understanding/no-keyboard-trap.html',
       _source: 'autoada-custom',
       _confidence: 'high',
-      nodes: traps.map((t) => ({
+      nodes: verified.map((t) => ({
         target: [t.selector],
         html: t.html,
         impact: 'critical',

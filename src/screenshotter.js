@@ -8,8 +8,8 @@
  * Backward compatible: result.base64 still available as primary screenshot.
  */
 
-const MAX_REGIONS = 5;
-const MAX_OVERLAYS = 50;
+const MAX_REGIONS = 2;
+const MAX_OVERLAYS = 30;
 
 const SEVERITY_COLORS = {
   critical: '#dc2626',
@@ -45,6 +45,7 @@ async function captureAnnotatedScreenshot(page, violations) {
             index: ++globalIndex,
             color: SEVERITY_COLORS[severity] || SEVERITY_COLORS.minor,
             ruleId: violation.id,
+            help: violation.help || violation.description || violation.id,
           });
         }
         if (globalIndex >= MAX_OVERLAYS) break;
@@ -54,6 +55,7 @@ async function captureAnnotatedScreenshot(page, violations) {
 
     // Get element positions (absolute Y) and viewport height
     const layout = await page.evaluate((elems) => {
+      const viewportWidth = window.innerWidth;
       const viewportHeight = window.innerHeight;
       const positions = [];
       for (const elem of elems) {
@@ -74,6 +76,7 @@ async function captureAnnotatedScreenshot(page, violations) {
         }
       }
       return {
+        viewportWidth,
         viewportHeight,
         pageHeight: document.documentElement.scrollHeight,
         positions,
@@ -113,11 +116,18 @@ async function captureAnnotatedScreenshot(page, violations) {
     // Primary screenshot is the first region (usually the most critical, top-of-page)
     const primary = regionScreenshots[0];
 
+    // Collect all annotations across all regions for the legend
+    const allAnnotations = regionScreenshots
+      .flatMap((r) => r.annotations || [])
+      // Deduplicate by index
+      .filter((a, i, arr) => arr.findIndex((b) => b.index === a.index) === i);
+
     return {
       base64: primary.base64,
-      width: layout.pageHeight,
+      width: layout.viewportWidth,
       height: layout.viewportHeight,
       regions: regionScreenshots,
+      annotations: allAnnotations,
     };
   } catch (err) {
     console.warn(`  Warning: Screenshot capture failed: ${err.message}`);
@@ -254,6 +264,13 @@ async function captureRegion(page, region, vpH) {
       base64: Buffer.from(buffer).toString('base64'),
       label: region.label,
       violationCount: region.violationCount,
+      annotations: region.elements.map((el) => ({
+        index: el.index,
+        ruleId: el.ruleId,
+        severity: el.severity,
+        color: el.color,
+        help: el.help,
+      })),
     };
   } catch (err) {
     console.warn(`  Warning: Region screenshot failed: ${err.message}`);

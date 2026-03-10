@@ -322,3 +322,15 @@ Every task follows this flow:
   - `src/scanner.js` — Replaced `require('puppeteer')` with `puppeteer-extra` + `puppeteer-extra-plugin-stealth` to evade headless browser detection. Added `waitForChallengeResolution()` that detects Cloudflare challenge indicators (title "Just a moment...", `#challenge-running`, `.cf-browser-verification`, challenge meta-refresh) and polls up to 15s for resolution.
   - `package.json` — Added `puppeteer-extra` and `puppeteer-extra-plugin-stealth` dependencies.
 - **Testing**: hereticparfum.com now scans the real site — 6 violations (37 elements), 33 passes, score 28. Before: 1 fake violation (meta-refresh), 10 passes, score 18. example.com regression passes (score 100).
+
+### Session 2026-03-10 — Screenshot & Report Quality Fixes
+- **Problems identified from hereticparfum.com scan results**:
+  1. Screenshots were gray/empty — images blocked by request interception during scanning
+  2. "10% OFF YOUR ORDER" Klaviyo popup appeared in every screenshot — not dismissed
+  3. Too many region screenshots per page (up to 5 per viewport × 10 pages = 100 screenshots)
+  4. Dashboard displayed ALL region screenshots without collapsing
+- **Files modified**:
+  - `src/scanner.js` — (1) Removed `'image'` from `BLOCKED_RESOURCE_TYPES` so screenshots show actual page content with images. (2) Added Klaviyo/Shopify-specific dismiss selectors (`.klaviyo-close-form`, `[aria-label="Close dialog"]`, `.popup-close`, etc.). (3) Rewrote `tryDismissOverlays()` with 4-strategy approach: overlay-checked click → relaxed click → accept fallback → force-remove any fixed overlay with z-index>999 via DOM manipulation. (4) Changed `loadPageDefensively()` to use `networkidle2` (with domcontentloaded fallback) for better full-page loading.
+  - `src/screenshotter.js` — Reduced `MAX_REGIONS` from 5 to 2 and `MAX_OVERLAYS` from 50 to 30 to limit screenshot bloat.
+  - `src/web/index.html` — Rewrote `renderScreenshots()` to only show primary desktop + mobile per page, limit to first 3 pages in "All Pages" view, and show "use page tabs" hint for remaining pages.
+- **Testing**: hereticparfum.com CLI scan: 6 violations, 32 passes, 25 elements, score 43. Desktop screenshots 332-390KB (vs ~0KB before — now contain real images). HTML report: 6 images totaling 1.9MB (vs massive bloat before). Region screenshots: max 2 per viewport. Dashboard: 3 pages shown max with hint for more. example.com regression passes (score 100).

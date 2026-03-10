@@ -12,7 +12,7 @@ const puppeteer = require('puppeteer');
  */
 async function generatePdf(htmlContent) {
   const browser = await puppeteer.launch({
-    headless: 'new',
+    headless: true,
     args: ['--no-sandbox', '--disable-setuid-sandbox'],
   });
 

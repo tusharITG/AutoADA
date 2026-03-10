@@ -19,8 +19,10 @@ const { applyConfidenceScores } = require('./confidence');
 puppeteer.use(StealthPlugin());
 
 // Resource types to block during scanning (keeps scripts + stylesheets for axe-core)
+// Note: 'image' is NOT blocked — needed for meaningful screenshots.
+// Fonts/media/beacons are still blocked for speed.
 const BLOCKED_RESOURCE_TYPES = new Set([
-  'image', 'font', 'media', 'beacon', 'csp_report', 'ping', 'imageset',
+  'font', 'media', 'beacon', 'csp_report', 'ping', 'imageset',
 ]);
 
 // Tracker/ad domains to block for faster, cleaner scans
@@ -31,14 +33,31 @@ const BLOCKED_DOMAINS = [
 
 // Common dismiss/close selectors (prefer close/dismiss over accept)
 const DISMISS_SELECTORS = [
+  // ARIA-based close buttons
   '[aria-label*="close" i]',
   '[aria-label*="dismiss" i]',
   '[aria-label*="reject" i]',
   '[aria-label*="decline" i]',
+  'button[aria-label*="deny" i]',
+  // Generic close buttons
   'button[class*="close" i]',
   '.modal-close',
   '[data-dismiss]',
-  'button[aria-label*="deny" i]',
+  // Klaviyo (Shopify email capture popups)
+  '.klaviyo-close-form',
+  '[aria-label="Close dialog"]',
+  '[aria-label="Close form"]',
+  'button.kl-private-close-button',
+  '.klaviyo-popup .close',
+  // Shopify popups
+  '.popup-close',
+  '.popup__close',
+  '.modal__close',
+  // Generic X/close buttons (SVG icons, etc.)
+  'button[class*="dismiss" i]',
+  '[data-action="close"]',
+  '[data-close]',
+  'button.close',
 ];
 
 const ACCEPT_FALLBACK_SELECTORS = [
@@ -115,11 +134,23 @@ async function enableRequestInterception(page) {
  * Doesn't rely solely on networkidle2 — uses a multi-step approach.
  */
 async function loadPageDefensively(page, url, timeout = 30000) {
-  // Step 1: Navigate with domcontentloaded (fast, reliable)
-  await page.goto(url, {
-    waitUntil: 'domcontentloaded',
-    timeout,
-  });
+  // Step 1: Navigate with networkidle2 for better full-page loading
+  try {
+    await page.goto(url, {
+      waitUntil: 'networkidle2',
+      timeout,
+    });
+  } catch {
+    // networkidle2 timeout — fall back to domcontentloaded
+    try {
+      await page.goto(url, {
+        waitUntil: 'domcontentloaded',
+        timeout: 15000,
+      });
+    } catch {
+      // Even domcontentloaded failed — continue with whatever loaded
+    }
+  }
 
   // Step 2: Detect and wait for Cloudflare/bot challenge pages
   await waitForChallengeResolution(page);
@@ -240,35 +271,68 @@ async function isInOverlayContainer(page, btn) {
 
 /**
  * Try to dismiss overlays/popups on the page.
- * Prefers close/dismiss over accept. Verifies button is inside an overlay.
+ * Uses a multi-strategy approach:
+ * 1. Click known dismiss/close selectors (checks overlay container)
+ * 2. Click known dismiss selectors (relaxed — skip overlay check for framework-specific selectors)
+ * 3. Click accept/cookie selectors (fallback)
+ * 4. Force-remove any remaining fixed overlays via DOM manipulation
  * Returns true if something was dismissed.
  */
 async function tryDismissOverlays(page) {
   let dismissed = false;
 
-  // First try dismiss/close/reject selectors
+  // Strategy 1: Try dismiss/close selectors with overlay container check
   for (const selector of DISMISS_SELECTORS) {
     try {
-      const btn = await page.$(selector);
-      if (btn) {
+      const buttons = await page.$$(selector);
+      for (const btn of buttons) {
         const isVisible = await page.evaluate((el) => {
           const style = window.getComputedStyle(el);
-          return style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0';
+          return style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0'
+            && el.offsetWidth > 0 && el.offsetHeight > 0;
         }, btn);
+        if (!isVisible) continue;
         const inOverlay = await isInOverlayContainer(page, btn);
-        if (isVisible && inOverlay) {
+        if (inOverlay) {
           await btn.click();
           dismissed = true;
           await new Promise((r) => setTimeout(r, 500));
           break;
         }
       }
+      if (dismissed) break;
     } catch {
       // Selector not found or click failed — try next
     }
   }
 
-  // Fallback: try accept selectors only if dismiss didn't work
+  // Strategy 2: Relaxed — try dismiss selectors WITHOUT overlay check
+  // (for framework popups like Klaviyo that use shadow DOM or non-standard containers)
+  if (!dismissed) {
+    for (const selector of DISMISS_SELECTORS) {
+      try {
+        const buttons = await page.$$(selector);
+        for (const btn of buttons) {
+          const isVisible = await page.evaluate((el) => {
+            const style = window.getComputedStyle(el);
+            return style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0'
+              && el.offsetWidth > 0 && el.offsetHeight > 0;
+          }, btn);
+          if (isVisible) {
+            await btn.click();
+            dismissed = true;
+            await new Promise((r) => setTimeout(r, 500));
+            break;
+          }
+        }
+        if (dismissed) break;
+      } catch {
+        // Try next
+      }
+    }
+  }
+
+  // Strategy 3: Accept/cookie selectors (fallback)
   if (!dismissed) {
     for (const selector of ACCEPT_FALLBACK_SELECTORS) {
       try {
@@ -278,8 +342,6 @@ async function tryDismissOverlays(page) {
             const style = window.getComputedStyle(el);
             return style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0';
           }, btn);
-          // Accept selectors (cookie banners) are more reliably overlays,
-          // so only check visibility, not overlay container
           if (isVisible) {
             await btn.click();
             dismissed = true;
@@ -291,6 +353,46 @@ async function tryDismissOverlays(page) {
         // Try next
       }
     }
+  }
+
+  // Strategy 4: Force-remove any remaining fixed/modal overlays via DOM
+  // This catches popups that resist clicking (Klaviyo, Privy, Justuno, etc.)
+  try {
+    const removedCount = await page.evaluate(() => {
+      let removed = 0;
+      const allElements = document.querySelectorAll('*');
+      for (const el of allElements) {
+        const style = window.getComputedStyle(el);
+        const zIndex = parseInt(style.zIndex, 10) || 0;
+        const isFixed = style.position === 'fixed';
+        const classList = el.classList ? el.classList.toString().toLowerCase() : '';
+        const id = (el.id || '').toLowerCase();
+
+        // Detect overlay/popup containers: fixed position with high z-index
+        // or known popup class/id patterns
+        const isPopup =
+          (isFixed && zIndex > 999) ||
+          /klaviyo|privy|justuno|popup|modal|overlay|lightbox/.test(classList) ||
+          /klaviyo|privy|justuno|popup|modal|overlay/.test(id);
+
+        if (isPopup && el.offsetWidth > 0 && el.offsetHeight > 0) {
+          // Don't remove navigation bars, headers, or small elements
+          const rect = el.getBoundingClientRect();
+          const coversSignificantArea = rect.width > 200 && rect.height > 200;
+          if (coversSignificantArea) {
+            el.remove();
+            removed++;
+          }
+        }
+      }
+      return removed;
+    });
+    if (removedCount > 0) {
+      dismissed = true;
+      await new Promise((r) => setTimeout(r, 300));
+    }
+  } catch {
+    // DOM manipulation failed — continue
   }
 
   return dismissed;
@@ -817,7 +919,7 @@ function aggregateViolations(pageResults) {
   return Array.from(ruleMap.values()).map((v) => ({
     ...v,
     _pageUrls: Array.from(v._pageUrls),
-    _affectedPages: v._pageUrls.size || v._pageUrls.length,
+    _affectedPages: v._pageUrls.size,
   }));
 }
 

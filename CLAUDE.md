@@ -334,3 +334,21 @@ Every task follows this flow:
   - `src/screenshotter.js` — Reduced `MAX_REGIONS` from 5 to 2 and `MAX_OVERLAYS` from 50 to 30 to limit screenshot bloat.
   - `src/web/index.html` — Rewrote `renderScreenshots()` to only show primary desktop + mobile per page, limit to first 3 pages in "All Pages" view, and show "use page tabs" hint for remaining pages.
 - **Testing**: hereticparfum.com CLI scan: 6 violations, 32 passes, 25 elements, score 43. Desktop screenshots 332-390KB (vs ~0KB before — now contain real images). HTML report: 6 images totaling 1.9MB (vs massive bloat before). Region screenshots: max 2 per viewport. Dashboard: 3 pages shown max with hint for more. example.com regression passes (score 100).
+
+### Session 2026-03-10 — Audit Technical Accuracy Improvements (Phases 1–4)
+- **Completed**: 4-phase plan to improve audit accuracy and transparency
+- **Phase 1 — Confidence-weighted scoring** (`src/score.js`):
+  - Added `CONFIDENCE_WEIGHTS` constant: high=1.0, medium=0.6, low=0.15
+  - Modified `calculateOverallScore()`: violations now weighted by `nodeCount × confWeight` in base score, and penalty loop multiplies by `confWeight`
+  - Added confirmed/review breakdown to `calculateScores()`: `confirmedViolations`, `needsReviewViolations`, `confirmedNodes`, `needsReviewNodes`
+  - Exported `CONFIDENCE_WEIGHTS` alongside existing exports
+- **Phase 2 — Keyboard trap detection + viewport fix** (`src/scanner.js`):
+  - Added `detectKeyboardTraps(page)`: Tab-cycles through focusable elements, detects 3+ consecutive same-selector focus as a trap. Returns axe-core-format violation (`autoada-keyboard-trap`, critical, high confidence). Integrated into `scanViewport()` after interactive scanning.
+  - Fixed desktop node viewport tagging: `combineViewportResults()` now tags desktop nodes with `_viewport: 'desktop'` (was only tagging mobile nodes before)
+- **Phase 3 — Smart SPA readiness** (`src/scanner.js`):
+  - Added `waitForFrameworkReady(page, maxWaitMs=8000)`: detects Next.js/React/Vue/Angular via `page.evaluate()`, uses MutationObserver-based DOM stability (1s of no mutations = ready), hard timeout 8s, fallback to 2s fixed wait
+  - Replaced fixed 2s `setTimeout` in `loadPageDefensively()` with `waitForFrameworkReady()`
+- **Phase 4 — Score transparency** (`src/reporters/html.js`, `src/web/index.html`):
+  - HTML report: Added score disclaimer ("Automated Scan Score — ~30-40% of WCAG 2.2 criteria"), confidence badges (Confirmed/Likely/Needs Verification) on each violation card, confirmed/review metrics row (4 cards), sort violations by confidence then severity
+  - Dashboard: Added score disclaimer under gauge, confidence stats row (4 cards), Confidence column in violations table with sort support, default sort changed from severity to confidence
+- **Testing**: example.com scan passes (score 100, 0 violations, 9 passes). JSON output contains new confidence fields. HTML report contains disclaimer, badges, metrics. Dashboard JS syntax valid. Confidence weighting verified: low-confidence violations score 56 vs 0 for same high-confidence violations.

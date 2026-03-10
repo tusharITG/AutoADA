@@ -155,8 +155,8 @@ async function loadPageDefensively(page, url, timeout = 30000) {
   // Step 2: Detect and wait for Cloudflare/bot challenge pages
   await waitForChallengeResolution(page);
 
-  // Step 3: Stable delay for JS framework hydration
-  await new Promise((r) => setTimeout(r, 2000));
+  // Step 3: Smart framework hydration detection (DOM stability-based)
+  await waitForFrameworkReady(page);
 
   // Step 4: Wait for key content selectors (best-effort, short timeout)
   try {
@@ -226,6 +226,74 @@ async function waitForChallengeResolution(page, maxWaitMs = 15000) {
   }
 
   console.warn('    [cloudflare] Challenge did not resolve within timeout — scanning challenge page');
+}
+
+/**
+ * Wait for SPA frameworks to finish hydrating/rendering.
+ * Uses MutationObserver to detect DOM stability (no changes for 1 second).
+ * Falls back to a fixed 2s wait if detection fails.
+ *
+ * @param {import('puppeteer').Page} page
+ * @param {number} maxWaitMs - Maximum wait time (default 8s)
+ */
+async function waitForFrameworkReady(page, maxWaitMs = 8000) {
+  try {
+    // Detect framework for logging
+    const framework = await page.evaluate(() => {
+      if (window.__NEXT_DATA__) return 'nextjs';
+      if (document.querySelector('[data-reactroot]') || document.querySelector('#__next')) return 'react';
+      if (document.querySelector('[data-v-]') || window.__VUE__) return 'vue';
+      if (document.querySelector('[ng-version]') || document.querySelector('app-root')) return 'angular';
+      return null;
+    });
+
+    if (framework) {
+      console.log(`    [framework] Detected: ${framework}`);
+    }
+
+    // Wait for DOM stability: resolve when no mutations for 1 second
+    await page.evaluate((maxWait) => {
+      return new Promise((resolve) => {
+        let timer = null;
+        let settled = false;
+        const STABILITY_WINDOW = 1000;
+
+        const observer = new MutationObserver(() => {
+          if (timer) clearTimeout(timer);
+          timer = setTimeout(() => {
+            settled = true;
+            observer.disconnect();
+            resolve();
+          }, STABILITY_WINDOW);
+        });
+
+        observer.observe(document.body || document.documentElement, {
+          childList: true,
+          subtree: true,
+          attributes: true,
+        });
+
+        // Initial timer — if no mutations at all, DOM is already stable
+        timer = setTimeout(() => {
+          if (!settled) {
+            observer.disconnect();
+            resolve();
+          }
+        }, STABILITY_WINDOW);
+
+        // Hard timeout — never wait longer than maxWait
+        setTimeout(() => {
+          if (!settled) {
+            observer.disconnect();
+            resolve();
+          }
+        }, maxWait);
+      });
+    }, maxWaitMs);
+  } catch {
+    // Fallback: fixed 2s wait
+    await new Promise((r) => setTimeout(r, 2000));
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -553,6 +621,101 @@ async function scanInteractiveStates(page, tags, axeConfig = {}) {
 }
 
 // ---------------------------------------------------------------------------
+// Keyboard trap detection — behavioral test using real Tab key presses
+// ---------------------------------------------------------------------------
+
+/**
+ * Detect keyboard traps by programmatically tabbing through the page.
+ * If the same element receives focus 3+ times consecutively, it's a trap.
+ * This catches real usability barriers that axe-core's static analysis misses.
+ *
+ * @param {import('puppeteer').Page} page
+ * @returns {Promise<Array>} Array of keyboard trap violations (axe-core format)
+ */
+async function detectKeyboardTraps(page) {
+  const MAX_TABS = 80;
+  const TRAP_THRESHOLD = 3; // Same element focused 3 times WITHOUT focus moving elsewhere
+
+  try {
+    // Click body to reset focus to start of page
+    await page.click('body').catch(() => {});
+    await new Promise((r) => setTimeout(r, 100));
+
+    // Track ALL focus positions including nulls (body) to distinguish
+    // real traps from normal page cycling on pages with few focusable elements
+    const rawHistory = []; // includes null entries
+    const traps = [];
+    let consecutiveSame = 0;
+    let lastSelector = null;
+    let lastInfo = null;
+
+    for (let i = 0; i < MAX_TABS; i++) {
+      await page.keyboard.press('Tab');
+
+      const focusInfo = await page.evaluate(() => {
+        const el = document.activeElement;
+        if (!el || el === document.body || el === document.documentElement) {
+          return null;
+        }
+        let selector = el.tagName.toLowerCase();
+        if (el.id) selector = '#' + el.id;
+        else if (el.className && typeof el.className === 'string' && el.className.trim()) {
+          selector += '.' + el.className.trim().split(/\s+/).slice(0, 2).join('.');
+        }
+        return {
+          selector,
+          html: el.outerHTML.substring(0, 250),
+        };
+      });
+
+      const currentSelector = focusInfo?.selector || null;
+      rawHistory.push(currentSelector);
+
+      // A real keyboard trap: focus STAYS on the same element for consecutive
+      // Tab presses without ever moving (not even to body/null between presses).
+      // Normal page cycling goes: elem1 → elem2 → ... → body → elem1 (focus
+      // moves through different elements and wraps via body).
+      if (currentSelector && currentSelector === lastSelector) {
+        consecutiveSame++;
+        lastInfo = focusInfo;
+        if (consecutiveSame >= TRAP_THRESHOLD) {
+          traps.push(focusInfo);
+          break;
+        }
+      } else {
+        consecutiveSame = currentSelector ? 1 : 0;
+        lastSelector = currentSelector;
+        lastInfo = focusInfo;
+      }
+    }
+
+    if (traps.length === 0) return [];
+
+    console.log(`    [keyboard-trap] Detected ${traps.length} keyboard trap(s)`);
+
+    return [{
+      id: 'autoada-keyboard-trap',
+      impact: 'critical',
+      help: 'Keyboard focus is trapped and cannot escape using Tab',
+      description: 'A keyboard trap was detected where Tab focus stays on the same element without progressing. Users who rely on keyboard navigation cannot move past this point.',
+      tags: ['wcag2a', 'wcag211', 'cat.keyboard'],
+      helpUrl: 'https://www.w3.org/WAI/WCAG22/Understanding/no-keyboard-trap.html',
+      _source: 'autoada-custom',
+      _confidence: 'high',
+      nodes: traps.map((t) => ({
+        target: [t.selector],
+        html: t.html,
+        impact: 'critical',
+        failureSummary: `Focus trapped at ${t.selector}. Ensure Tab and Shift+Tab move focus normally through all interactive elements.`,
+      })),
+    }];
+  } catch (err) {
+    console.warn(`    [keyboard-trap] Detection failed: ${err.message}`);
+    return [];
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Optimized per-viewport scanning (loads page ONCE, scans twice)
 // ---------------------------------------------------------------------------
 
@@ -599,6 +762,12 @@ async function scanViewport(browser, url, viewport, tags, timeout, axeConfig = {
       if (interactiveViolations.length > 0) {
         violations = mergeViolations(violations, interactiveViolations);
       }
+    }
+
+    // Keyboard trap detection (always enabled — catches critical usability issues)
+    const keyboardTraps = await detectKeyboardTraps(page);
+    if (keyboardTraps.length > 0) {
+      violations = mergeViolations(violations, keyboardTraps);
     }
 
     // Capture screenshot after dismissal (more useful — shows the real page)
@@ -699,7 +868,8 @@ function combineViewportResults(desktop, mobile) {
 
   for (const v of desktop.violations) {
     const viewport = mobileRuleIds.has(v.id) ? 'both' : 'desktop-only';
-    combined.set(v.id, { ...v, _viewport: viewport });
+    const taggedNodes = v.nodes.map((n) => ({ ...n, _viewport: 'desktop' }));
+    combined.set(v.id, { ...v, _viewport: viewport, nodes: taggedNodes });
   }
 
   for (const v of mobile.violations) {

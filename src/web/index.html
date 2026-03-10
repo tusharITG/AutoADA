@@ -232,6 +232,16 @@ header .container { display: flex; align-items: center; justify-content: space-b
 .impact-serious { background: rgba(255,99,72,.15); color: var(--serious); }
 .impact-moderate { background: rgba(255,165,2,.15); color: var(--moderate); }
 .impact-minor { background: rgba(55,66,250,.15); color: var(--minor); }
+.conf-badge { display: inline-block; padding: 3px 10px; border-radius: 20px; font-size: 11px; font-weight: 600; letter-spacing: .3px; }
+.conf-high { background: rgba(46,213,115,.15); color: var(--pass); }
+.conf-medium { background: rgba(255,165,2,.15); color: var(--moderate); }
+.conf-low { background: rgba(155,163,175,.2); color: var(--text-dim); }
+.score-disclaimer-dash { background: var(--surface2); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 10px 14px; margin: 8px 0 0; font-size: 11px; color: var(--text-dim); text-align: center; line-height: 1.5; }
+.confidence-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 24px; }
+.conf-stat { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 14px; text-align: center; }
+.conf-stat .conf-stat-value { font-size: 24px; font-weight: 700; line-height: 1.2; }
+.conf-stat .conf-stat-label { font-size: 11px; color: var(--text-dim); margin-top: 4px; text-transform: uppercase; letter-spacing: .3px; }
+@media (max-width: 700px) { .confidence-stats { grid-template-columns: 1fr 1fr; } }
 
 .violation-detail { background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-sm); margin: 0 16px 12px; padding: 16px; }
 .violation-detail h4 { font-size: 14px; margin-bottom: 8px; }
@@ -565,6 +575,7 @@ header .container { display: flex; align-items: center; justify-content: space-b
       </div>
       <div class="score-label" id="scoreLabel"></div>
       <div class="score-benchmark" id="scoreBenchmark"></div>
+      <div class="score-disclaimer-dash">Automated scan &middot; ~30&ndash;40% of WCAG criteria &middot; Manual testing required</div>
     </div>
 
     <!-- Severity Breakdown -->
@@ -596,6 +607,14 @@ header .container { display: flex; align-items: center; justify-content: space-b
     <div class="stat-card"><div class="stat-value" style="color:var(--critical)" id="statViolations">0</div><div class="stat-label">Violation Rules</div></div>
     <div class="stat-card"><div class="stat-value" style="color:var(--pass)" id="statPasses">0</div><div class="stat-label">Passed Rules</div></div>
     <div class="stat-card"><div class="stat-value" style="color:var(--moderate)" id="statElements">0</div><div class="stat-label">Affected Elements</div></div>
+  </div>
+
+  <!-- Confidence Stats -->
+  <div class="confidence-stats" id="confidenceStats" style="display:none;">
+    <div class="conf-stat"><div class="conf-stat-value" style="color:var(--pass)" id="confConfirmedIssues">0</div><div class="conf-stat-label">Confirmed Issues</div></div>
+    <div class="conf-stat"><div class="conf-stat-value" style="color:var(--moderate)" id="confReviewIssues">0</div><div class="conf-stat-label">Needs Review</div></div>
+    <div class="conf-stat"><div class="conf-stat-value" style="color:var(--pass)" id="confConfirmedNodes">0</div><div class="conf-stat-label">Confirmed Elements</div></div>
+    <div class="conf-stat"><div class="conf-stat-value" style="color:var(--moderate)" id="confReviewNodes">0</div><div class="conf-stat-label">Review Elements</div></div>
   </div>
 
   <!-- Page Selector -->
@@ -946,7 +965,7 @@ let scanScores = null;
 let currentSeverityFilter = 'all';
 let currentSearchTerm = '';
 let currentPageFilter = 'all';
-let sortCol = 'impact';
+let sortCol = 'confidence';
 let sortDir = 'asc';
 
 // Chart instances
@@ -1168,6 +1187,15 @@ function renderDashboard() {
   document.getElementById('statViolations').textContent = s.totalViolations;
   document.getElementById('statPasses').textContent = s.totalPasses;
   document.getElementById('statElements').textContent = s.totalViolationNodes;
+
+  // Confidence stats
+  if (s.confirmedViolations != null || s.needsReviewViolations != null) {
+    document.getElementById('confConfirmedIssues').textContent = s.confirmedViolations || 0;
+    document.getElementById('confReviewIssues').textContent = s.needsReviewViolations || 0;
+    document.getElementById('confConfirmedNodes').textContent = s.confirmedNodes || 0;
+    document.getElementById('confReviewNodes').textContent = s.needsReviewNodes || 0;
+    document.getElementById('confidenceStats').style.display = '';
+  }
 
   // Charts
   renderSeverityChart(s.severityBreakdown);
@@ -1473,9 +1501,14 @@ function getFilteredViolations() {
 
   // Sort
   const impactOrder = { critical: 0, serious: 1, moderate: 2, minor: 3 };
+  const confOrder = { high: 0, medium: 1, low: 2 };
   violations = [...violations].sort((a, b) => {
     let aVal, bVal;
     switch (sortCol) {
+      case 'confidence':
+        aVal = confOrder[a._confidence] ?? 1;
+        bVal = confOrder[b._confidence] ?? 1;
+        break;
       case 'impact':
         aVal = impactOrder[a.impact] ?? 4;
         bVal = impactOrder[b.impact] ?? 4;
@@ -1517,6 +1550,7 @@ function renderViolationsTable() {
 
   let html = `<table class="violations-table">
     <thead><tr>
+      <th onclick="toggleSort('confidence')">Confidence${arrow('confidence')}</th>
       <th onclick="toggleSort('impact')">Severity${arrow('impact')}</th>
       <th onclick="toggleSort('rule')">Rule${arrow('rule')}</th>
       <th>Description</th>
@@ -1529,7 +1563,10 @@ function renderViolationsTable() {
   for (let i = 0; i < violations.length; i++) {
     const v = violations[i];
     const wcag = extractWcagCriteria(v.tags);
+    const conf = v._confidence || 'medium';
+    const confLabel = conf === 'high' ? 'Confirmed' : conf === 'medium' ? 'Likely' : 'Review';
     html += `<tr onclick="toggleViolationDetail(${i})" style="cursor:pointer" id="vrow-${i}">
+      <td><span class="conf-badge conf-${conf}">${confLabel}</span></td>
       <td><span class="impact-badge impact-${v.impact}">${v.impact}</span></td>
       <td style="font-family:monospace;font-size:13px">${escapeHtml(v.id)}</td>
       <td>${escapeHtml(v.help)}</td>
@@ -1538,7 +1575,7 @@ function renderViolationsTable() {
       <td>${v._affectedPages || 1}</td>
     </tr>
     <tr id="vdetail-${i}" style="display:none">
-      <td colspan="6">
+      <td colspan="7">
         <div class="violation-detail">
           <h4>${escapeHtml(v.help)}</h4>
           <div class="detail-meta">

@@ -37,6 +37,14 @@ const SEVERITY_WEIGHTS = {
   minor: 1,
 };
 
+// Confidence-based weighting — low-confidence violations (likely false positives)
+// contribute much less to the score than confirmed violations.
+const CONFIDENCE_WEIGHTS = {
+  high: 1.0,    // Deterministic rules (html-has-lang, document-title, etc.)
+  medium: 0.6,  // Moderate FP rate (heading-order, region, label, etc.)
+  low: 0.15,    // High FP rate (color-contrast, etc.) — barely affects score
+};
+
 /**
  * Calculate overall compliance score (0-100).
  *
@@ -54,11 +62,12 @@ function calculateOverallScore(violations, passes) {
 
   if (violationList.length === 0 && passList.length === 0) return 100;
 
-  // Weight each violation by node count (severity is handled separately in the penalty)
+  // Weight each violation by node count × confidence (severity is handled separately in penalty)
   let weightedViolations = 0;
   for (const v of violationList) {
     const nodeCount = v.nodes ? v.nodes.length : 1;
-    weightedViolations += nodeCount;
+    const confWeight = CONFIDENCE_WEIGHTS[v._confidence] || 0.6;
+    weightedViolations += nodeCount * confWeight;
   }
 
   // Weight each pass by node count
@@ -75,14 +84,15 @@ function calculateOverallScore(violations, passes) {
   const passRate = weightedPasses / totalWeighted;
   const baseScore = passRate * 100;
 
-  // Severity penalty (logarithmically scaled to avoid runaway deductions)
+  // Severity penalty (logarithmically scaled, confidence-weighted)
   let rawPenalty = 0;
   for (const v of violationList) {
     const severity = v.impact || 'minor';
     const weight = SEVERITY_WEIGHTS[severity] || 1;
     const nodeCount = v.nodes ? v.nodes.length : 1;
+    const confWeight = CONFIDENCE_WEIGHTS[v._confidence] || 0.6;
     // Log scale: first instance counts full, additional instances have diminishing impact
-    rawPenalty += weight * (1 + Math.log2(nodeCount));
+    rawPenalty += weight * (1 + Math.log2(nodeCount)) * confWeight;
   }
 
   // Scale penalty relative to total weighted count (more elements checked = more tolerance)
@@ -261,6 +271,23 @@ function calculateScores(scanResult, industry) {
     (acc, i) => acc + (i.nodes ? i.nodes.length : 0), 0
   );
 
+  // Categorize violations by confidence level
+  let confirmedViolations = 0;
+  let needsReviewViolations = 0;
+  let confirmedNodes = 0;
+  let needsReviewNodes = 0;
+
+  for (const v of violations) {
+    const nodeCount = (v.nodes || []).length;
+    if (v._confidence === 'low') {
+      needsReviewViolations++;
+      needsReviewNodes += nodeCount;
+    } else {
+      confirmedViolations++;
+      confirmedNodes += nodeCount;
+    }
+  }
+
   return {
     overall,
     severityBreakdown,
@@ -271,7 +298,11 @@ function calculateScores(scanResult, industry) {
     totalPasses: passes.length,
     totalIncomplete: incomplete.length,
     totalIncompleteNodes,
+    confirmedViolations,
+    needsReviewViolations,
+    confirmedNodes,
+    needsReviewNodes,
   };
 }
 
-module.exports = { calculateScores, calculateOverallScore };
+module.exports = { calculateScores, calculateOverallScore, CONFIDENCE_WEIGHTS };

@@ -376,6 +376,15 @@ function generateStyles(accentColor) {
     .badge-pass { background: #16a34a; }
     .badge-level-a { background: #6366f1; }
     .badge-level-aa { background: #8b5cf6; }
+    .badge-confirmed { background: #16a34a; }
+    .badge-review { background: #ca8a04; }
+    .badge-needs-verification { background: #9ca3af; }
+
+    .score-disclaimer {
+      background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px;
+      padding: 14px 18px; margin: 16px 0 24px; font-size: 0.9rem;
+      color: #1e40af; text-align: center; line-height: 1.5;
+    }
 
     /* WCAG SC detail block */
     .wcag-sc-list { margin: 8px 0 12px; }
@@ -795,11 +804,35 @@ function renderExecutiveSummary(scanResult, scores) {
   return `
     <h2 class="section-heading" id="exec-summary">Executive Summary</h2>
 
-    <h3 class="sub-heading">Overall Compliance Score</h3>
+    <h3 class="sub-heading">Automated Scan Score</h3>
     <div style="text-align:center;">
       <div class="score-card" style="background:${scoreBg};">
         <div class="score-number">${overall}</div>
         <div class="score-label">out of 100</div>
+      </div>
+    </div>
+    <div class="score-disclaimer">
+      <strong>Automated Scan Score</strong> &mdash; This score reflects only issues detectable by automated
+      scanning with axe-core, which covers approximately 30&ndash;40% of WCAG 2.2 criteria. Issues requiring
+      human judgment (keyboard usability, screen reader flow, cognitive load, content quality) are not fully
+      covered. A complete accessibility assessment requires manual expert testing.
+    </div>
+    <div class="metrics-row">
+      <div class="metric-card">
+        <div class="metric-value" style="color:#16a34a;">${scores.confirmedViolations || 0}</div>
+        <div class="metric-label">Confirmed Issues</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-value" style="color:#ca8a04;">${scores.needsReviewViolations || 0}</div>
+        <div class="metric-label">Needs Manual Review</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-value">${scores.confirmedNodes || 0}</div>
+        <div class="metric-label">Confirmed Elements</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-value">${scores.needsReviewNodes || 0}</div>
+        <div class="metric-label">Review Elements</div>
       </div>
     </div>
 
@@ -1043,8 +1076,14 @@ function renderDetailedFindingsByRule(scanResult, scores) {
       continue;
     }
 
-    // Sort by severity
-    items.sort((a, b) => severityPriority(a.impact) - severityPriority(b.impact));
+    // Sort by confidence (high first = confirmed issues at top), then by severity
+    const confPriority = { high: 0, medium: 1, low: 2 };
+    items.sort((a, b) => {
+      const confA = confPriority[a._confidence] ?? 1;
+      const confB = confPriority[b._confidence] ?? 1;
+      if (confA !== confB) return confA - confB;
+      return severityPriority(a.impact) - severityPriority(b.impact);
+    });
 
     for (const v of items) {
       html += renderViolationCard(v);
@@ -1067,18 +1106,34 @@ function renderViolationCard(violation) {
   const remediation = remediationData[ruleId];
   const fpNote = falsePositives[ruleId];
 
+  // Confidence badge
+  const confidence = violation._confidence || 'medium';
+  let confLabel, confClass;
+  if (confidence === 'high') {
+    confLabel = 'Confirmed';
+    confClass = 'badge-confirmed';
+  } else if (confidence === 'medium') {
+    confLabel = 'Likely';
+    confClass = 'badge-review';
+  } else {
+    confLabel = 'Needs Verification';
+    confClass = 'badge-needs-verification';
+  }
+
   // Card heading
   let html = `
     <div class="card violation-card" data-rule="${escapeHtml(ruleId)}" id="rule-${escapeHtml(ruleId)}">
       <h4 class="card-heading">
         <span class="badge badge-${impact}">${escapeHtml(impact)}</span>
+        <span class="badge ${confClass}">${confLabel}</span>
         ${escapeHtml(violation.help || ruleId)}
       </h4>
 
       <table>
-        <thead><tr><th>Severity</th><th>Affected Elements</th><th>WCAG Criteria</th><th>Viewport(s)</th></tr></thead>
+        <thead><tr><th>Severity</th><th>Confidence</th><th>Affected Elements</th><th>WCAG Criteria</th><th>Viewport(s)</th></tr></thead>
         <tbody><tr>
           <td><span class="badge badge-${impact}">${escapeHtml(impact)}</span></td>
+          <td><span class="badge ${confClass}">${confLabel}</span></td>
           <td>${nodes.length}</td>
           <td>${escapeHtml(wcag) || 'N/A'}</td>
           <td>${escapeHtml(viewport)}</td>

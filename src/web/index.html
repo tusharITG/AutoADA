@@ -370,13 +370,13 @@ header .container { display: flex; align-items: center; justify-content: space-b
   <div class="scan-hero">
     <div class="hero-badge">WCAG 2.2 Level AA Compliance</div>
     <h1>Automated <span>Accessibility</span><br>Auditing Tool</h1>
-    <p>Scan any website for ADA and WCAG compliance issues. Get detailed reports with severity rankings, fix guidance, and annotated screenshots across desktop and mobile.</p>
+    <p>Scan any website for ADA and WCAG compliance issues. Confidence-weighted scoring, keyboard trap detection, SPA support, and detailed reports with fix guidance across desktop and mobile.</p>
 
     <div class="url-input-group">
       <input type="url" id="urlInput" placeholder="https://example.com" autofocus>
       <button class="btn-scan" id="btnStart" onclick="startScan()">Start Scan</button>
     </div>
-    <div class="scan-hint">Press <kbd>Enter</kbd> to scan &middot; Discovers all pages via sitemap automatically</div>
+    <div class="scan-hint">Press <kbd>Enter</kbd> to scan &middot; Auto-discovers pages via sitemap or link crawling</div>
 
     <button class="advanced-toggle" id="advToggle" onclick="toggleAdvanced()">Advanced Options <span class="arrow">&#9660;</span></button>
 
@@ -387,16 +387,28 @@ header .container { display: flex; align-items: center; justify-content: space-b
           <input type="number" id="optMaxPages" value="100" min="1" max="500">
         </div>
         <div class="form-group">
+          <label>Concurrency</label>
+          <input type="number" id="optConcurrency" value="2" min="1" max="5">
+        </div>
+        <div class="form-group">
           <label>Timeout (ms)</label>
           <input type="number" id="optTimeout" value="30000" min="5000" step="5000">
+        </div>
+        <div class="form-group">
+          <label>Client Name</label>
+          <input type="text" id="optClientName" placeholder="Optional">
         </div>
         <div class="form-group">
           <label>WCAG Tags</label>
           <input type="text" id="optTags" placeholder="wcag2a,wcag2aa,wcag21a,wcag21aa,wcag22aa">
         </div>
-        <div class="form-group">
-          <label>Client Name</label>
-          <input type="text" id="optClientName" placeholder="Optional">
+        <div class="form-group" style="display:flex; align-items:center; gap:16px; padding-top:18px;">
+          <label style="display:flex; align-items:center; gap:6px; cursor:pointer; margin:0; text-transform:none; letter-spacing:0; font-size:13px; color:var(--text);">
+            <input type="checkbox" id="optCrawl" style="accent-color:var(--accent); width:16px; height:16px;"> Link Crawling
+          </label>
+          <label style="display:flex; align-items:center; gap:6px; cursor:pointer; margin:0; text-transform:none; letter-spacing:0; font-size:13px; color:var(--text);">
+            <input type="checkbox" id="optInteractive" style="accent-color:var(--accent); width:16px; height:16px;"> Interactive States
+          </label>
         </div>
       </div>
     </div>
@@ -415,36 +427,36 @@ header .container { display: flex; align-items: center; justify-content: space-b
       <div class="feature-icon green">
         <svg width="22" height="22" fill="none" stroke="#2ed573" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
       </div>
-      <h3>Smart Popup Handling</h3>
-      <p>Automatically dismisses cookie banners and modal overlays so the real page content gets properly audited.</p>
+      <h3>Cloudflare &amp; SPA Ready</h3>
+      <p>Stealth plugin bypasses bot detection. Detects React, Vue, Next.js, Angular and waits for DOM stability before scanning.</p>
     </div>
     <div class="feature-card">
       <div class="feature-icon orange">
         <svg width="22" height="22" fill="none" stroke="#ffa502" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
       </div>
-      <h3>Multi-Format Reports</h3>
-      <p>Export results as JSON, CSV, HTML, or PDF. Self-contained HTML reports with embedded screenshots and branding.</p>
+      <h3>Confidence Scoring</h3>
+      <p>Every violation tagged as confirmed, likely, or needs review. Low-confidence issues penalize 85% less to minimize false positives.</p>
     </div>
     <div class="feature-card">
       <div class="feature-icon pink">
         <svg width="22" height="22" fill="none" stroke="#ff4757" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
       </div>
-      <h3>Annotated Screenshots</h3>
-      <p>Visual overlays highlight violations directly on page screenshots with color-coded severity indicators.</p>
+      <h3>Keyboard Trap Detection</h3>
+      <p>Simulates real Tab cycling to detect focus traps where keyboard users get stuck. Auto-verifies with Shift+Tab to eliminate false positives.</p>
     </div>
     <div class="feature-card">
       <div class="feature-icon blue">
         <svg width="22" height="22" fill="none" stroke="#3742fa" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
       </div>
-      <h3>Compliance Scoring</h3>
-      <p>Get a 0-100 score with industry benchmark comparison, severity-weighted penalties, and per-principle breakdowns.</p>
+      <h3>Smart Page Discovery</h3>
+      <p>Finds pages via sitemap, auto-crawls links when no sitemap exists, respects robots.txt, and supports concurrent multi-page scanning.</p>
     </div>
     <div class="feature-card">
       <div class="feature-icon teal">
         <svg width="22" height="22" fill="none" stroke="#00ced1" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 014 4v14a3 3 0 00-3-3H2z"/><path d="M22 3h-6a4 4 0 00-4 4v14a3 3 0 013-3h7z"/></svg>
       </div>
-      <h3>Remediation Guidance</h3>
-      <p>Each violation includes fix suggestions, before/after code examples, WCAG criteria mapping, and effort estimates.</p>
+      <h3>Interactive State Scanning</h3>
+      <p>Expands accordions, tabs, and details elements to find hidden violations. Generates 4-format reports with screenshots and remediation.</p>
     </div>
   </div>
 
@@ -454,26 +466,26 @@ header .container { display: flex; align-items: center; justify-content: space-b
     <div class="steps">
       <div class="step">
         <div class="step-num">1</div>
-        <h4>Enter URL</h4>
-        <p>Provide your website URL. AutoADA discovers all pages via sitemap.xml automatically.</p>
+        <h4>Discover Pages</h4>
+        <p>Enter a URL. AutoADA finds pages via sitemap, or auto-crawls links if no sitemap exists.</p>
         <div class="step-connector"></div>
       </div>
       <div class="step">
         <div class="step-num">2</div>
-        <h4>Crawl &amp; Scan</h4>
-        <p>Each page is loaded in a headless browser and tested with axe-core at two viewports.</p>
+        <h4>Scan &amp; Test</h4>
+        <p>Each page is loaded with Cloudflare bypass, SPA detection, popup dismissal, and dual-viewport axe-core analysis.</p>
         <div class="step-connector"></div>
       </div>
       <div class="step">
         <div class="step-num">3</div>
-        <h4>Analyze</h4>
-        <p>Violations are deduplicated, scored, and mapped to WCAG success criteria with remediation tips.</p>
+        <h4>Score &amp; Classify</h4>
+        <p>Violations are confidence-scored, weighted by severity, and mapped to WCAG success criteria with remediation guidance.</p>
         <div class="step-connector"></div>
       </div>
       <div class="step">
         <div class="step-num">4</div>
         <h4>Review &amp; Export</h4>
-        <p>Explore results in the interactive dashboard, then download reports in any format.</p>
+        <p>Explore results in the dashboard, filter by confidence, then download reports as HTML, PDF, JSON, or CSV.</p>
       </div>
     </div>
   </div>
@@ -669,7 +681,7 @@ header .container { display: flex; align-items: center; justify-content: space-b
   <div class="about-hero">
     <div class="version-badge">v1.0.0</div>
     <h1>About <span>AutoADA</span></h1>
-    <p>A professional-grade accessibility auditing tool that scans websites for ADA and WCAG compliance issues, generating detailed, client-ready reports with actionable remediation guidance.</p>
+    <p>A professional-grade accessibility auditing tool that scans websites for ADA and WCAG compliance issues. Features confidence-weighted scoring, keyboard trap detection, SPA framework support, Cloudflare bypass, and generates client-ready reports with actionable remediation guidance.</p>
   </div>
 
   <!-- Quick Stats -->
@@ -679,16 +691,16 @@ header .container { display: flex; align-items: center; justify-content: space-b
       <div class="stat-desc">Accessibility Rules</div>
     </div>
     <div class="about-stat">
-      <div class="stat-num">5</div>
-      <div class="stat-desc">WCAG Standards</div>
+      <div class="stat-num">55</div>
+      <div class="stat-desc">WCAG 2.2 Criteria Mapped</div>
+    </div>
+    <div class="about-stat">
+      <div class="stat-num">3</div>
+      <div class="stat-desc">Confidence Levels</div>
     </div>
     <div class="about-stat">
       <div class="stat-num">4</div>
       <div class="stat-desc">Export Formats</div>
-    </div>
-    <div class="about-stat">
-      <div class="stat-num">2</div>
-      <div class="stat-desc">Viewport Modes</div>
     </div>
   </div>
 
@@ -701,43 +713,43 @@ header .container { display: flex; align-items: center; justify-content: space-b
         <div class="feature-icon purple">
           <svg width="22" height="22" fill="none" stroke="#a29bfe" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.66 0 3-4.03 3-9s-1.34-9-3-9m0 18c-1.66 0-3-4.03-3-9s1.34-9 3-9m-9 9a9 9 0 019-9"/></svg>
         </div>
-        <h3>Multi-Page Crawling</h3>
-        <p>Automatically discovers all pages via sitemap.xml. No need to manually list URLs &mdash; just enter your homepage and AutoADA does the rest.</p>
+        <h3>Smart Page Discovery</h3>
+        <p>Finds pages via sitemap.xml, auto-crawls links when no sitemap exists, respects robots.txt, and supports concurrent multi-page scanning.</p>
       </div>
       <div class="feature-card">
         <div class="feature-icon purple">
           <svg width="22" height="22" fill="none" stroke="#a29bfe" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="18" height="16" rx="2"/><path d="M8 21h6"/><path d="M11 17v4"/></svg>
         </div>
-        <h3>Dual Viewport Testing</h3>
-        <p>Every page is tested at desktop (1280px) and mobile (375px) viewports to catch responsive accessibility issues that only appear at certain breakpoints.</p>
+        <h3>Dual Viewport + SPA Support</h3>
+        <p>Tests at desktop and mobile viewports. Detects React, Vue, Next.js, Angular and waits for DOM stability. Bypasses Cloudflare challenges automatically.</p>
       </div>
       <div class="feature-card">
         <div class="feature-icon green">
           <svg width="22" height="22" fill="none" stroke="#2ed573" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
         </div>
-        <h3>Smart Popup Handling</h3>
-        <p>Intelligently dismisses cookie consent banners, modals, overlays, and popups before scanning so the actual page content is properly audited.</p>
+        <h3>Confidence Scoring</h3>
+        <p>Every violation tagged as confirmed, likely, or needs review. Low-confidence false positives penalize the score 85% less than confirmed issues.</p>
       </div>
       <div class="feature-card">
         <div class="feature-icon pink">
           <svg width="22" height="22" fill="none" stroke="#ff4757" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
         </div>
-        <h3>Annotated Screenshots</h3>
-        <p>Captures screenshots at both viewports with color-coded visual overlays highlighting exactly where violations occur on the page.</p>
+        <h3>Keyboard Trap Detection</h3>
+        <p>Simulates Tab cycling to detect focus traps where keyboard users get stuck. Verified with Shift+Tab to eliminate false positives. WCAG 2.1.1 compliant.</p>
       </div>
       <div class="feature-card">
         <div class="feature-icon blue">
           <svg width="22" height="22" fill="none" stroke="#3742fa" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
         </div>
-        <h3>Compliance Scoring</h3>
-        <p>Calculates a 0&ndash;100 score using severity-weighted logarithmic penalties, with per-principle breakdowns and industry benchmark comparisons.</p>
+        <h3>Interactive State Scanning</h3>
+        <p>Expands accordions, tabs, and hidden content to find violations inside collapsed elements. Scans popups and overlays before and after dismissal.</p>
       </div>
       <div class="feature-card">
         <div class="feature-icon teal">
           <svg width="22" height="22" fill="none" stroke="#00ced1" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 014 4v14a3 3 0 00-3-3H2z"/><path d="M22 3h-6a4 4 0 00-4 4v14a3 3 0 013-3h7z"/></svg>
         </div>
-        <h3>Remediation Guidance</h3>
-        <p>Every violation includes fix suggestions, WCAG success criteria mapping, effort estimates, and before/after code examples to help developers resolve issues.</p>
+        <h3>Remediation &amp; Reports</h3>
+        <p>WCAG criteria mapping, fix guidance, before/after code, annotated screenshots, and 4 export formats (HTML, PDF, JSON, CSV) with client branding.</p>
       </div>
     </div>
   </div>
@@ -853,8 +865,8 @@ header .container { display: flex; align-items: center; justify-content: space-b
       </div>
       <div class="tech-card">
         <div class="tech-icon">&#127760;</div>
-        <h4>Puppeteer</h4>
-        <p>Headless Chrome automation for reliable page loading, screenshot capture, and real-browser accessibility testing.</p>
+        <h4>Puppeteer + Stealth</h4>
+        <p>Headless Chrome with stealth plugin for Cloudflare bypass, SPA framework detection, and real-browser accessibility testing.</p>
       </div>
       <div class="tech-card">
         <div class="tech-icon">&#9889;</div>
@@ -874,9 +886,9 @@ header .container { display: flex; align-items: center; justify-content: space-b
         <span class="cli-comment"># Basic scan with HTML report</span><br>
         npm start -- https://example.com<br><br>
         <span class="cli-comment"># Full audit with all formats and branding</span><br>
-        npm start -- https://example.com <span class="cli-flag">-f</span> <span class="cli-value">all</span> <span class="cli-flag">--client-name</span> <span class="cli-value">"Acme Corp"</span><br><br>
-        <span class="cli-comment"># Quick scan with page limit</span><br>
-        npm start -- https://example.com <span class="cli-flag">--max-pages</span> <span class="cli-value">10</span> <span class="cli-flag">-f</span> <span class="cli-value">html,pdf</span>
+        npm start -- https://example.com <span class="cli-flag">-f</span> <span class="cli-value">all</span> <span class="cli-flag">--client-name</span> <span class="cli-value">"Acme Corp"</span> <span class="cli-flag">--client-color</span> <span class="cli-value">"#ff6600"</span><br><br>
+        <span class="cli-comment"># Thorough scan with crawling and interactive states</span><br>
+        npm start -- https://example.com <span class="cli-flag">--crawl</span> <span class="cli-flag">--interactive</span> <span class="cli-flag">--concurrency</span> <span class="cli-value">3</span> <span class="cli-flag">--max-pages</span> <span class="cli-value">20</span>
       </div>
       <h3 style="margin-top:20px;">Available Options</h3>
       <div style="display:grid; grid-template-columns: auto 1fr; gap: 8px 16px; font-size:13px; margin-top:12px;">
@@ -888,6 +900,11 @@ header .container { display: flex; align-items: center; justify-content: space-b
         <code style="color:var(--accent-light);">-t, --tags</code><span style="color:var(--text-dim);">WCAG tags to test (comma-separated)</span>
         <code style="color:var(--accent-light);">--timeout</code><span style="color:var(--text-dim);">Page load timeout in ms (default: 30000)</span>
         <code style="color:var(--accent-light);">--max-pages</code><span style="color:var(--text-dim);">Maximum pages to scan (default: 100)</span>
+        <code style="color:var(--accent-light);">--crawl</code><span style="color:var(--text-dim);">Enable link-based page discovery (BFS crawl)</span>
+        <code style="color:var(--accent-light);">--interactive</code><span style="color:var(--text-dim);">Scan interactive states (accordions, tabs, details)</span>
+        <code style="color:var(--accent-light);">--concurrency</code><span style="color:var(--text-dim);">Pages to scan in parallel (default: 1)</span>
+        <code style="color:var(--accent-light);">--extra-urls</code><span style="color:var(--text-dim);">Text file with additional URLs (one per line)</span>
+        <code style="color:var(--accent-light);">--axe-config</code><span style="color:var(--text-dim);">JSON config to disable rules or include/exclude selectors</span>
       </div>
     </div>
   </div>
@@ -1004,6 +1021,9 @@ async function startScan() {
     url,
     maxPages: parseInt(document.getElementById('optMaxPages').value) || 100,
     timeout: parseInt(document.getElementById('optTimeout').value) || 30000,
+    concurrency: parseInt(document.getElementById('optConcurrency').value) || 2,
+    crawl: document.getElementById('optCrawl').checked || undefined,
+    interactive: document.getElementById('optInteractive').checked || undefined,
     tags: document.getElementById('optTags').value || undefined,
     clientName: document.getElementById('optClientName').value || undefined,
   };

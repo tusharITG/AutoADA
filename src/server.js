@@ -25,12 +25,13 @@ const scans = new Map();
 const SCAN_TTL_MS = 30 * 60 * 1000; // 30 minutes
 const MAX_CONCURRENT_SCANS = 3;
 
-// Periodic cleanup: remove completed/errored scans older than TTL
+// Periodic cleanup: remove completed/errored scans older than TTL (from completion, not start)
 setInterval(() => {
   const now = Date.now();
   for (const [id, scan] of scans) {
     if (scan.status === 'running') continue;
-    if (now - scan.startedAt > SCAN_TTL_MS) {
+    const finishedAt = scan.completedAt || scan.startedAt;
+    if (now - finishedAt > SCAN_TTL_MS) {
       scans.delete(id);
     }
   }
@@ -87,6 +88,7 @@ app.post('/api/scan', (req, res) => {
   runScan(scanRecord).catch((err) => {
     scanRecord.status = 'error';
     scanRecord.error = err.message;
+    scanRecord.completedAt = Date.now();
     broadcastSSE(scanRecord, { phase: 'error', message: err.message });
     closeSSEClients(scanRecord);
   });
@@ -163,22 +165,30 @@ app.get('/api/scan/:id/export/:format', async (req, res) => {
     clientColor: scan.options.clientColor || null,
   };
 
+  // Auto-save reports to project reports/ directory
+  const reportsDir = path.join(__dirname, '..', 'reports');
+  const fs = require('fs');
+  try { fs.mkdirSync(reportsDir, { recursive: true }); } catch { /* exists */ }
+
   try {
     switch (format) {
       case 'json': {
         const content = generateJson(scan.results, scan.scores);
+        try { fs.writeFileSync(path.join(reportsDir, `${baseName}.json`), content, 'utf-8'); } catch { /* non-critical */ }
         res.setHeader('Content-Type', 'application/json');
         res.setHeader('Content-Disposition', `attachment; filename="${baseName}.json"`);
         return res.send(content);
       }
       case 'csv': {
         const content = generateCsv(scan.results);
+        try { fs.writeFileSync(path.join(reportsDir, `${baseName}.csv`), content, 'utf-8'); } catch { /* non-critical */ }
         res.setHeader('Content-Type', 'text/csv');
         res.setHeader('Content-Disposition', `attachment; filename="${baseName}.csv"`);
         return res.send(content);
       }
       case 'html': {
         const content = generateHtml(scan.results, scan.scores, brandingOptions);
+        try { fs.writeFileSync(path.join(reportsDir, `${baseName}.html`), content, 'utf-8'); } catch { /* non-critical */ }
         res.setHeader('Content-Type', 'text/html');
         res.setHeader('Content-Disposition', `attachment; filename="${baseName}.html"`);
         return res.send(content);
@@ -186,6 +196,7 @@ app.get('/api/scan/:id/export/:format', async (req, res) => {
       case 'pdf': {
         const htmlContent = generateHtml(scan.results, scan.scores, brandingOptions);
         const pdfBuffer = await generatePdf(htmlContent);
+        try { fs.writeFileSync(path.join(reportsDir, `${baseName}.pdf`), pdfBuffer); } catch { /* non-critical */ }
         res.setHeader('Content-Type', 'application/pdf');
         res.setHeader('Content-Disposition', `attachment; filename="${baseName}.pdf"`);
         return res.send(pdfBuffer);
@@ -234,6 +245,7 @@ async function runScan(scanRecord) {
   scanRecord.results = scanResult;
   scanRecord.scores = scores;
   scanRecord.status = 'done';
+  scanRecord.completedAt = Date.now();
 
   broadcastSSE(scanRecord, { phase: 'done' });
   closeSSEClients(scanRecord);

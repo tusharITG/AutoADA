@@ -75,16 +75,22 @@ async function parseSitemap(sitemapUrl, maxPages) {
     const xml = await fetchUrl(sitemapUrl);
 
     if (isSitemapIndex(xml)) {
-      // This is an index — extract child sitemap URLs and fetch each
+      // This is an index — fetch ALL child sitemaps to ensure page type diversity
+      // (smart dedup later will reduce to maxPerType samples per pattern)
       const childSitemapUrls = extractUrlsFromSitemap(xml);
-      for (const childUrl of childSitemapUrls) {
-        if (pageUrls.length >= maxPages) break;
+      // Hard cap to prevent fetching thousands of child sitemaps
+      const MAX_CHILD_SITEMAPS = 20;
+      const childrenToFetch = childSitemapUrls.slice(0, MAX_CHILD_SITEMAPS);
+
+      for (const childUrl of childrenToFetch) {
         try {
           const childXml = await fetchUrl(childUrl);
           const childPages = extractUrlsFromSitemap(childXml);
-          for (const page of childPages) {
-            if (pageUrls.length >= maxPages) break;
-            pageUrls.push(page);
+          // Take a sample from each child (first 50) to keep memory reasonable
+          // while ensuring all page types are represented
+          const SAMPLE_PER_CHILD = 50;
+          for (let i = 0; i < childPages.length && i < SAMPLE_PER_CHILD; i++) {
+            pageUrls.push(childPages[i]);
           }
         } catch (err) {
           console.warn(`  Warning: Could not fetch child sitemap ${childUrl}: ${err.message}`);
@@ -322,6 +328,67 @@ async function crawlLinks(startUrl, maxPages, disallowedPaths = []) {
 }
 
 // ---------------------------------------------------------------------------
+// Smart page-type deduplication
+// ---------------------------------------------------------------------------
+
+/**
+ * Classify a URL into a "page type" pattern by replacing dynamic path segments
+ * (numeric IDs, slugs, hashes) with a placeholder.
+ * E.g., /products/dirty-hinoki → /products/:slug
+ *       /collections/all      → /collections/:slug
+ *       /blogs/journal/post-1 → /blogs/:slug/:slug
+ *       /                     → /
+ *       /pages/about          → /pages/:slug
+ */
+function getPageTypePattern(url) {
+  try {
+    const parsed = new URL(url);
+    const segments = parsed.pathname.split('/').filter(Boolean);
+    if (segments.length === 0) return '/';
+
+    // First segment is usually the "type" (products, collections, blogs, pages, etc.)
+    // Subsequent segments are typically dynamic (product slug, collection name, etc.)
+    const pattern = segments.map((seg, i) => {
+      if (i === 0) return seg; // Keep the top-level type
+      // If it looks like a fixed structural segment (short, common names), keep it
+      const fixedSegments = ['all', 'new', 'featured', 'sale', 'tag', 'tagged', 'page', 'category', 'archive'];
+      if (fixedSegments.includes(seg.toLowerCase())) return seg;
+      return ':slug';
+    });
+
+    return '/' + pattern.join('/');
+  } catch {
+    return url;
+  }
+}
+
+/**
+ * Reduce URLs by limiting pages per URL type pattern.
+ * Pages that don't match any pattern (unique paths) are always kept.
+ * E.g., if maxPerType=3 and there are 200 /products/* URLs, keep only 3.
+ *
+ * @param {string[]} urls - Deduplicated URL list
+ * @param {number} maxPerType - Max pages to keep per URL pattern
+ * @returns {string[]} Reduced URL list preserving variety
+ */
+function deduplicateByPageType(urls, maxPerType = 3) {
+  const typeCounts = new Map();
+  const result = [];
+
+  for (const url of urls) {
+    const pattern = getPageTypePattern(url);
+    const count = typeCounts.get(pattern) || 0;
+
+    if (count < maxPerType) {
+      result.push(url);
+      typeCounts.set(pattern, count + 1);
+    }
+  }
+
+  return result;
+}
+
+// ---------------------------------------------------------------------------
 // Main page discovery
 // ---------------------------------------------------------------------------
 
@@ -384,7 +451,7 @@ async function discoverPages(baseUrl, extraUrlsFile, maxPages = 100, crawlOption
     allUrls.push(...crawledUrls);
   }
 
-  // 4. Deduplicate and enforce same-domain
+  // 4. Deduplicate and enforce same-domain (no maxPages cap yet — apply after type dedup)
   const seen = new Set();
   const deduplicated = [];
 
@@ -398,15 +465,37 @@ async function discoverPages(baseUrl, extraUrlsFile, maxPages = 100, crawlOption
       if (seen.has(normalized)) continue;
       seen.add(normalized);
       deduplicated.push(url);
-
-      if (deduplicated.length >= maxPages) break;
     } catch {
       // Skip invalid URLs
     }
   }
 
-  console.log(`  Total unique pages to scan: ${deduplicated.length}`);
-  return deduplicated;
+  // 5. Smart page-type deduplication — limit similar URL patterns to MAX_PER_TYPE samples
+  // Applied BEFORE maxPages cap so all page types get representation
+  // E.g., /products/x, /products/y, /products/z → only scan 3 of them
+  const MAX_PER_TYPE = 3;
+  const smartDeduped = deduplicateByPageType(deduplicated, MAX_PER_TYPE);
+
+  if (smartDeduped.length < deduplicated.length) {
+    // Log pattern breakdown for transparency
+    const patternCounts = new Map();
+    for (const url of deduplicated) {
+      const p = getPageTypePattern(url);
+      patternCounts.set(p, (patternCounts.get(p) || 0) + 1);
+    }
+    const breakdown = [...patternCounts.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .map(([p, c]) => `${p}(${c})`)
+      .join(', ');
+    console.log(`  [smart-dedup] Reduced from ${deduplicated.length} → ${smartDeduped.length} pages (max ${MAX_PER_TYPE} per URL pattern)`);
+    console.log(`  [smart-dedup] Pattern breakdown: ${breakdown}`);
+  }
+
+  // 6. Enforce maxPages cap after type dedup
+  const finalPages = smartDeduped.slice(0, maxPages);
+
+  console.log(`  Total unique pages to scan: ${finalPages.length}`);
+  return finalPages;
 }
 
 module.exports = { discoverPages };

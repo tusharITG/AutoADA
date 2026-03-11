@@ -73,6 +73,14 @@ const VIEWPORTS = {
   mobile: { width: 375, height: 812 },
 };
 
+// Rate-limiting between page scans to avoid Cloudflare escalation
+const INTER_PAGE_DELAY_MS = { min: 1000, max: 3000 };
+const MAX_CONSECUTIVE_CF_FAILURES = 3;
+
+function randomDelay(min, max) {
+  return min + Math.random() * (max - min);
+}
+
 // ---------------------------------------------------------------------------
 // Utility: retry with exponential backoff
 // ---------------------------------------------------------------------------
@@ -88,8 +96,10 @@ async function withRetry(fn, maxRetries = 2, baseDelay = 2000) {
     try {
       return await fn();
     } catch (err) {
-      // Don't retry non-transient errors (DNS failure, unreachable host, etc.)
+      // Don't retry non-transient errors (DNS failure, unreachable host, Cloudflare CAPTCHA)
       if (err.message && err.message.startsWith('Page unreachable:')) throw err;
+      if (err.message && err.message.includes('Cloudflare escalated')) throw err;
+      if (err.message && err.message.includes('Cloudflare challenge did not resolve')) throw err;
       if (attempt === maxRetries) throw err;
       const delay = baseDelay * Math.pow(2, attempt); // 2s, 4s
       console.warn(`    Retry ${attempt + 1}/${maxRetries} after ${delay}ms: ${err.message}`);
@@ -202,7 +212,13 @@ async function loadPageDefensively(page, url, timeout = 30000) {
   }
 
   // Step 2: Detect and wait for Cloudflare/bot challenge pages
-  await waitForChallengeResolution(page);
+  const challengeStatus = await waitForChallengeResolution(page);
+  if (challengeStatus.escalated) {
+    throw new Error('Cloudflare escalated to interactive CAPTCHA — page cannot be scanned automatically');
+  }
+  if (!challengeStatus.resolved && challengeStatus.type === 'timeout') {
+    throw new Error('Cloudflare challenge did not resolve within timeout');
+  }
 
   // Step 3: Smart framework hydration detection (DOM stability-based)
   await waitForFrameworkReady(page);
@@ -239,13 +255,10 @@ async function waitForChallengeResolution(page, maxWaitMs = 15000) {
     try {
       return await page.evaluate(() => {
         const title = document.title.toLowerCase();
-        // Cloudflare challenge — require strong indicators (title or DOM selectors)
         const hasCfTitle = title.includes('just a moment') || title.includes('attention required');
         const hasCfDom = !!document.querySelector('#challenge-running, #challenge-form, .cf-browser-verification, #cf-wrapper, .cf-error-details');
-        // Meta refresh only counts as Cloudflare if pointing to cdn-cgi (NOT generic meta-refresh)
         const metaRefresh = document.querySelector('meta[http-equiv="refresh"]');
         const hasCfMeta = metaRefresh && (metaRefresh.getAttribute('content') || '').includes('cdn-cgi');
-        // Must have at least one strong Cloudflare indicator
         return hasCfTitle || hasCfDom || hasCfMeta;
       });
     } catch {
@@ -253,25 +266,56 @@ async function waitForChallengeResolution(page, maxWaitMs = 15000) {
     }
   };
 
-  if (!(await isChallengePage())) return;
+  const isTurnstilePage = async () => {
+    try {
+      return await page.evaluate(() => {
+        // Turnstile iframe
+        if (document.querySelector('iframe[src*="challenges.cloudflare.com"]')) return true;
+        // Turnstile widget containers
+        if (document.querySelector('.cf-turnstile, #turnstile-wrapper, [data-sitekey]')) return true;
+        // Interactive challenge checkbox
+        if (document.querySelector('#challenge-stage input[type="checkbox"]')) return true;
+        // "Verify you are human" text pattern
+        const body = (document.body?.innerText || '').toLowerCase().substring(0, 1000);
+        if (body.includes('verify you are human') || body.includes('verify that you are not a robot')) return true;
+        return false;
+      });
+    } catch {
+      return false;
+    }
+  };
+
+  if (!(await isChallengePage())) return { resolved: true, escalated: false, type: 'none' };
 
   console.log('    [cloudflare] Challenge detected, waiting for resolution...');
+
+  // Check for Turnstile immediately — if interactive, don't waste time waiting
+  if (await isTurnstilePage()) {
+    console.warn('    [cloudflare] Interactive Turnstile CAPTCHA detected — cannot auto-resolve');
+    return { resolved: false, escalated: true, type: 'turnstile' };
+  }
+
   const start = Date.now();
 
   while (Date.now() - start < maxWaitMs) {
     await new Promise((r) => setTimeout(r, 2000));
 
-    // Check if we navigated away from the challenge
     if (!(await isChallengePage())) {
       const elapsed = ((Date.now() - start) / 1000).toFixed(1);
       console.log(`    [cloudflare] Challenge resolved in ${elapsed}s`);
-      // Give the real page a moment to render
       await new Promise((r) => setTimeout(r, 1000));
-      return;
+      return { resolved: true, escalated: false, type: 'js-challenge' };
+    }
+
+    // Re-check for escalation during wait
+    if (await isTurnstilePage()) {
+      console.warn('    [cloudflare] Escalated to interactive Turnstile during wait');
+      return { resolved: false, escalated: true, type: 'turnstile' };
     }
   }
 
-  console.warn('    [cloudflare] Challenge did not resolve within timeout — scanning challenge page');
+  console.warn('    [cloudflare] Challenge did not resolve within timeout');
+  return { resolved: false, escalated: false, type: 'timeout' };
 }
 
 /**
@@ -840,10 +884,11 @@ async function detectKeyboardTraps(page) {
  * @returns {Promise<object>} viewport scan result
  */
 async function scanViewport(browser, url, viewport, tags, timeout, axeConfig = {}, interactive = false) {
-  const context = await browser.createBrowserContext();
-
+  // Use default browser context (NOT isolated) so Cloudflare clearance cookies persist
+  // across pages on the same domain — prevents re-triggering challenges on every page.
+  let page;
   try {
-    const page = await context.newPage();
+    page = await browser.newPage();
     await page.setUserAgent('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36');
     await enableRequestInterception(page);
     await page.setBypassCSP(true);
@@ -892,7 +937,9 @@ async function scanViewport(browser, url, viewport, tags, timeout, axeConfig = {
       testEnvironment: results2.testEnvironment,
     };
   } finally {
-    await context.close();
+    if (page) {
+      try { await page.close(); } catch { /* page may already be closed */ }
+    }
   }
 }
 
@@ -1060,10 +1107,34 @@ async function scanAllPages(urls, options = {}) {
 
   const pageResults = [];
   let completedCount = 0;
+  let consecutiveCloudflareFailures = 0;
+  let abortedRemainingCount = 0;
 
   try {
     // Process URLs in batches of `concurrency` size
     for (let batchStart = 0; batchStart < urls.length; batchStart += concurrency) {
+      // Check if we should abort due to Cloudflare rate-limiting
+      if (consecutiveCloudflareFailures >= MAX_CONSECUTIVE_CF_FAILURES) {
+        const remaining = urls.length - batchStart;
+        console.warn(`  Aborting: ${MAX_CONSECUTIVE_CF_FAILURES} consecutive Cloudflare blocks — skipping ${remaining} remaining pages`);
+        emit({
+          phase: 'cloudflare-abort',
+          message: `Cloudflare rate-limiting detected after ${completedCount} pages. ${remaining} pages skipped to preserve results.`,
+        });
+        // Mark remaining URLs as skipped
+        for (let i = batchStart; i < urls.length; i++) {
+          abortedRemainingCount++;
+          pageResults.push({
+            url: urls[i],
+            error: 'Skipped: Cloudflare rate-limiting detected',
+            desktop: { violations: [], passes: [], incomplete: [], inapplicable: [], screenshot: null },
+            mobile: { violations: [], passes: [], incomplete: [], inapplicable: [], screenshot: null },
+            combined: { violations: [], passes: [], incomplete: [], inapplicable: [] },
+          });
+        }
+        break;
+      }
+
       const batch = urls.slice(batchStart, batchStart + concurrency);
 
       const batchPromises = batch.map(async (url, batchIndex) => {
@@ -1074,11 +1145,23 @@ async function scanAllPages(urls, options = {}) {
         try {
           const result = await scanPage(browser, url, { tags, timeout, axeConfig, interactive });
           completedCount++;
+          consecutiveCloudflareFailures = 0; // Reset on success
           emit({ phase: 'page-done', current: completedCount, total: urls.length, url, violations: result.combined.violations.length });
           return result;
         } catch (err) {
           console.warn(`  Error scanning ${url}: ${err.message}`);
           completedCount++;
+
+          const isCloudflareError = err.message && (
+            err.message.includes('Cloudflare escalated') ||
+            err.message.includes('Cloudflare challenge did not resolve')
+          );
+          if (isCloudflareError) {
+            consecutiveCloudflareFailures++;
+          } else {
+            consecutiveCloudflareFailures = 0;
+          }
+
           emit({ phase: 'page-error', current: completedCount, total: urls.length, url, error: err.message });
           return {
             url,
@@ -1092,6 +1175,12 @@ async function scanAllPages(urls, options = {}) {
 
       const batchResults = await Promise.all(batchPromises);
       pageResults.push(...batchResults);
+
+      // Rate-limit between batches to avoid triggering Cloudflare escalation
+      if (batchStart + concurrency < urls.length && consecutiveCloudflareFailures < MAX_CONSECUTIVE_CF_FAILURES) {
+        const delay = randomDelay(INTER_PAGE_DELAY_MS.min, INTER_PAGE_DELAY_MS.max);
+        await new Promise((r) => setTimeout(r, delay));
+      }
     }
   } finally {
     await browser.close();

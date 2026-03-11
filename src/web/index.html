@@ -344,6 +344,121 @@ header .container { display: flex; align-items: center; justify-content: space-b
 .btn-about:hover { border-color: var(--accent); color: var(--text); }
 .btn-about.active { background: var(--accent); border-color: var(--accent); color: #fff; }
 
+/* ===== Journey View ===== */
+.journey-hero { text-align: center; padding: 56px 0 40px; position: relative; }
+.journey-hero::before { content: ''; position: absolute; top: -80px; left: 50%; transform: translateX(-50%); width: 700px; height: 700px; background: radial-gradient(circle, rgba(108,92,231,.12) 0%, rgba(46,213,115,.06) 40%, transparent 70%); pointer-events: none; z-index: 0; }
+.journey-hero > * { position: relative; z-index: 1; }
+.journey-hero h1 { font-size: 44px; font-weight: 800; letter-spacing: -1.5px; margin-bottom: 16px; line-height: 1.1; }
+.journey-hero h1 span { background: linear-gradient(135deg, #ffa502, #ff6348, #ff4757); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
+.journey-hero .journey-subtitle { color: var(--text-dim); font-size: 17px; max-width: 700px; margin: 0 auto 12px; line-height: 1.7; }
+.journey-hero .journey-author { font-size: 14px; color: var(--text-dim); margin-top: 20px; }
+.journey-hero .journey-author strong { color: var(--text); }
+
+.journey-stats-banner { display: grid; grid-template-columns: repeat(5, 1fr); gap: 16px; margin-bottom: 48px; }
+@media (max-width: 800px) { .journey-stats-banner { grid-template-columns: repeat(3, 1fr); } }
+@media (max-width: 500px) { .journey-stats-banner { grid-template-columns: 1fr 1fr; } }
+.journey-stat { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px 16px; text-align: center; transition: border-color .3s, transform .3s; }
+.journey-stat:hover { border-color: var(--accent); transform: translateY(-3px); }
+.journey-stat .j-stat-num { font-size: 28px; font-weight: 700; background: linear-gradient(135deg, var(--accent-light), #74b9ff); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; line-height: 1.2; }
+.journey-stat .j-stat-label { font-size: 11px; color: var(--text-dim); margin-top: 4px; text-transform: uppercase; letter-spacing: .5px; }
+
+.journey-section { margin-bottom: 56px; }
+.journey-section h2 { font-size: 26px; font-weight: 700; letter-spacing: -.5px; margin-bottom: 6px; }
+.journey-section h2 .section-icon { margin-right: 10px; }
+.journey-section .section-lead { color: var(--text-dim); font-size: 15px; margin-bottom: 28px; line-height: 1.6; max-width: 800px; }
+
+/* Timeline */
+.journey-timeline { position: relative; padding-left: 40px; }
+.journey-timeline::before { content: ''; position: absolute; left: 15px; top: 0; bottom: 0; width: 2px; background: linear-gradient(to bottom, var(--accent), var(--pass), var(--accent-light)); }
+.timeline-phase { position: relative; margin-bottom: 36px; }
+.timeline-phase:last-child { margin-bottom: 0; }
+.timeline-dot { position: absolute; left: -40px; top: 4px; width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 14px; font-weight: 700; color: #fff; z-index: 1; }
+.timeline-dot.planning { background: linear-gradient(135deg, var(--accent), #5b4bd5); }
+.timeline-dot.building { background: linear-gradient(135deg, #3742fa, #74b9ff); }
+.timeline-dot.fixing { background: linear-gradient(135deg, #ff6348, #ffa502); }
+.timeline-dot.testing { background: linear-gradient(135deg, var(--pass), #00b894); }
+.timeline-dot.polishing { background: linear-gradient(135deg, #e056fd, #be2edd); }
+.timeline-phase h3 { font-size: 18px; font-weight: 700; margin-bottom: 4px; }
+.timeline-phase .phase-meta { font-size: 12px; color: var(--text-dim); margin-bottom: 10px; text-transform: uppercase; letter-spacing: .5px; }
+.timeline-phase p { font-size: 14px; color: var(--text-dim); line-height: 1.7; max-width: 760px; }
+.timeline-phase .phase-tags { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+.timeline-phase .phase-tag { background: var(--surface2); border: 1px solid var(--border); color: var(--text-dim); padding: 4px 12px; border-radius: 14px; font-size: 11px; font-weight: 500; }
+
+/* Challenge Cards */
+.challenge-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+@media (max-width: 800px) { .challenge-grid { grid-template-columns: 1fr; } }
+.challenge-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 28px 24px; position: relative; overflow: hidden; transition: border-color .3s, transform .3s; }
+.challenge-card:hover { border-color: var(--serious); transform: translateY(-2px); }
+.challenge-card::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px; }
+.challenge-card.challenge-cloudflare::before { background: linear-gradient(90deg, #ff6348, #ffa502); }
+.challenge-card.challenge-scoring::before { background: linear-gradient(90deg, #3742fa, #a29bfe); }
+.challenge-card.challenge-fps::before { background: linear-gradient(90deg, #ff4757, #ff6b81); }
+.challenge-card.challenge-screenshots::before { background: linear-gradient(90deg, #2ed573, #7bed9f); }
+.challenge-card.challenge-traps::before { background: linear-gradient(90deg, #e056fd, #d980fa); }
+.challenge-card.challenge-crawling::before { background: linear-gradient(90deg, #ffa502, #eccc68); }
+.challenge-card .challenge-label { font-size: 10px; text-transform: uppercase; letter-spacing: .8px; font-weight: 700; margin-bottom: 8px; }
+.challenge-card.challenge-cloudflare .challenge-label { color: #ffa502; }
+.challenge-card.challenge-scoring .challenge-label { color: var(--accent-light); }
+.challenge-card.challenge-fps .challenge-label { color: var(--critical); }
+.challenge-card.challenge-screenshots .challenge-label { color: var(--pass); }
+.challenge-card.challenge-traps .challenge-label { color: #e056fd; }
+.challenge-card.challenge-crawling .challenge-label { color: #ffa502; }
+.challenge-card h4 { font-size: 16px; font-weight: 700; margin-bottom: 8px; }
+.challenge-card .challenge-problem { font-size: 13px; color: var(--critical); background: rgba(255,71,87,.08); border-radius: 6px; padding: 10px 14px; margin-bottom: 10px; line-height: 1.5; }
+.challenge-card .challenge-solution { font-size: 13px; color: var(--pass); background: rgba(46,213,115,.08); border-radius: 6px; padding: 10px 14px; line-height: 1.5; }
+.challenge-card .challenge-impact { font-size: 12px; color: var(--text-dim); margin-top: 10px; font-style: italic; }
+
+/* Why It Matters Cards */
+.why-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }
+@media (max-width: 900px) { .why-grid { grid-template-columns: 1fr; } }
+.why-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 28px 24px; text-align: center; transition: border-color .3s, transform .3s; }
+.why-card:hover { border-color: var(--accent); transform: translateY(-3px); }
+.why-card .why-icon { width: 56px; height: 56px; border-radius: 16px; display: flex; align-items: center; justify-content: center; font-size: 28px; margin: 0 auto 16px; }
+.why-card .why-icon.legal { background: rgba(255,71,87,.12); }
+.why-card .why-icon.trust { background: rgba(108,92,231,.12); }
+.why-card .why-icon.accuracy { background: rgba(46,213,115,.12); }
+.why-card .why-icon.speed { background: rgba(55,66,250,.12); }
+.why-card .why-icon.coverage { background: rgba(255,165,2,.12); }
+.why-card .why-icon.reports { background: rgba(0,206,209,.12); }
+.why-card h4 { font-size: 16px; font-weight: 700; margin-bottom: 8px; }
+.why-card p { font-size: 13px; color: var(--text-dim); line-height: 1.6; }
+
+/* Testing Evidence */
+.testing-summary { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 28px; }
+.testing-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 20px; }
+@media (max-width: 700px) { .testing-row { grid-template-columns: 1fr 1fr; } }
+.testing-metric { text-align: center; }
+.testing-metric .tm-value { font-size: 36px; font-weight: 700; }
+.testing-metric .tm-value.green { color: var(--pass); }
+.testing-metric .tm-value.orange { color: var(--moderate); }
+.testing-metric .tm-value.blue { color: var(--accent-light); }
+.testing-metric .tm-label { font-size: 12px; color: var(--text-dim); margin-top: 2px; text-transform: uppercase; letter-spacing: .3px; }
+.test-sites-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; margin-top: 16px; }
+@media (max-width: 800px) { .test-sites-grid { grid-template-columns: repeat(3, 1fr); } }
+.test-site { background: var(--surface2); border-radius: var(--radius-sm); padding: 14px 12px; text-align: center; }
+.test-site .ts-name { font-size: 12px; font-weight: 600; margin-bottom: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.test-site .ts-score { font-size: 20px; font-weight: 700; }
+.test-site .ts-score.excellent { color: var(--pass); }
+.test-site .ts-score.good { color: #2ed573; }
+.test-site .ts-score.needs-improvement { color: var(--moderate); }
+.test-site .ts-score.poor { color: var(--serious); }
+.test-site .ts-score.critical-score { color: var(--critical); }
+
+/* Methodology badge row */
+.methodology-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 16px; margin-top: 20px; }
+@media (max-width: 800px) { .methodology-grid { grid-template-columns: repeat(3, 1fr); } }
+@media (max-width: 500px) { .methodology-grid { grid-template-columns: 1fr 1fr; } }
+.method-badge { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px 16px; text-align: center; transition: border-color .3s; }
+.method-badge:hover { border-color: var(--accent); }
+.method-badge .mb-num { width: 32px; height: 32px; border-radius: 50%; background: linear-gradient(135deg, var(--accent), #5b4bd5); color: #fff; display: flex; align-items: center; justify-content: center; font-size: 14px; font-weight: 700; margin: 0 auto 10px; }
+.method-badge h5 { font-size: 13px; font-weight: 600; margin-bottom: 4px; }
+.method-badge p { font-size: 11px; color: var(--text-dim); line-height: 1.4; }
+
+/* Journey CTA */
+.journey-cta { text-align: center; padding: 48px 0; border-top: 1px solid var(--border); margin-top: 16px; }
+.journey-cta h2 { font-size: 28px; font-weight: 700; margin-bottom: 12px; }
+.journey-cta p { color: var(--text-dim); margin-bottom: 24px; font-size: 15px; max-width: 600px; margin-left: auto; margin-right: auto; line-height: 1.6; }
+
 /* Scrollbar */
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: var(--surface); }
@@ -357,6 +472,7 @@ header .container { display: flex; align-items: center; justify-content: space-b
   <div class="container">
     <div class="logo">Auto<span>ADA</span></div>
     <div class="header-right">
+      <button class="btn-about" id="btnJourney" onclick="showView('journey')">The Journey</button>
       <button class="btn-about" id="btnAbout" onclick="showView('about')">About</button>
       <button class="btn-new-scan" id="btnNewScan" onclick="showView('scan')">New Scan</button>
     </div>
@@ -964,6 +1080,535 @@ header .container { display: flex; align-items: center; justify-content: space-b
 
 </div><!-- end viewAbout -->
 
+<!-- ===== VIEW 5: Journey ===== -->
+<div class="view" id="viewJourney">
+
+  <!-- Hero -->
+  <div class="journey-hero">
+    <div class="hero-badge" style="background: rgba(255,165,2,.15); border-color: rgba(255,165,2,.3); color: #ffa502;">Development Chronicle</div>
+    <h1>The <span>Journey</span> Behind AutoADA</h1>
+    <p class="journey-subtitle">
+      Building a production-grade accessibility scanner required solving real-world challenges that no tutorial covers &mdash; from Cloudflare bot-detection walls to false positive epidemics. This is the story of how AutoADA was engineered, one problem at a time, to deliver audit results you can trust.
+    </p>
+    <p class="journey-author">Engineered by <strong>Tushar Tomar</strong> at <strong>IT GEEKS</strong> &middot; March 2026</p>
+  </div>
+
+  <!-- Quick Stats -->
+  <div class="journey-stats-banner">
+    <div class="journey-stat">
+      <div class="j-stat-num">21</div>
+      <div class="j-stat-label">Tasks Completed</div>
+    </div>
+    <div class="journey-stat">
+      <div class="j-stat-num">8</div>
+      <div class="j-stat-label">Sub-Phases</div>
+    </div>
+    <div class="journey-stat">
+      <div class="j-stat-num">47</div>
+      <div class="j-stat-label">Tests Executed</div>
+    </div>
+    <div class="journey-stat">
+      <div class="j-stat-num">12</div>
+      <div class="j-stat-label">Files Built</div>
+    </div>
+    <div class="journey-stat">
+      <div class="j-stat-num">6</div>
+      <div class="j-stat-label">Bugs Caught &amp; Fixed</div>
+    </div>
+  </div>
+
+  <!-- === Section: Why This Was Necessary === -->
+  <div class="journey-section">
+    <h2><span class="section-icon">&#9888;&#65039;</span> Why AutoADA Was Necessary</h2>
+    <p class="section-lead">
+      94.8% of the top million websites fail at least one WCAG criterion. The average site has 51 accessibility errors per page. Existing tools either produce overwhelming false positives, miss hidden violations behind popups and collapsed content, or simply fail on modern web architectures. AutoADA was built to address these real gaps with engineering precision.
+    </p>
+    <div class="why-grid">
+      <div class="why-card">
+        <div class="why-icon legal">&#9878;</div>
+        <h4>Legal Compliance Urgency</h4>
+        <p>ADA Title III lawsuits exceeded 4,000+ filings per year. Organizations need reliable, automated scanning to identify violations before legal action occurs &mdash; not after.</p>
+      </div>
+      <div class="why-card">
+        <div class="why-icon accuracy">&#127919;</div>
+        <h4>False Positive Problem</h4>
+        <p>Existing scanners report <code>color-contrast</code> failures on elements with background images, flag decorative <code>alt=""</code> images, and generate noise that erodes trust. Confidence scoring was essential.</p>
+      </div>
+      <div class="why-card">
+        <div class="why-icon trust">&#128274;</div>
+        <h4>Modern Web Complexity</h4>
+        <p>SPAs built with React, Vue, and Next.js render content dynamically. Cloudflare blocks headless browsers. Accordion content hides violations. A scanner that only sees static HTML misses the majority of issues.</p>
+      </div>
+      <div class="why-card">
+        <div class="why-icon speed">&#9889;</div>
+        <h4>Audit Efficiency</h4>
+        <p>Manual WCAG audits take 40+ hours per site. AutoADA scans in minutes with concurrent page processing, producing detailed reports instantly &mdash; freeing auditors to focus on the 60% of criteria requiring human judgment.</p>
+      </div>
+      <div class="why-card">
+        <div class="why-icon coverage">&#128302;</div>
+        <h4>Score Transparency</h4>
+        <p>Scores without context are meaningless. AutoADA separates confirmed violations from likely issues and needs-review items, provides industry benchmarks, and clearly states that automated scanning covers only 30&ndash;40% of WCAG.</p>
+      </div>
+      <div class="why-card">
+        <div class="why-icon reports">&#128221;</div>
+        <h4>Actionable Reports</h4>
+        <p>A list of rule IDs helps nobody. AutoADA maps every violation to its WCAG success criterion with legal relevance, provides fix guidance with before/after code, and estimates remediation effort.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- === Section: Development Methodology === -->
+  <div class="journey-section">
+    <h2><span class="section-icon">&#128736;</span> Development Methodology</h2>
+    <p class="section-lead">
+      AutoADA was built following the Ralphy methodology &mdash; a disciplined, task-driven engineering approach that ensures every feature is independently verified before moving forward. No cutting corners, no shipping untested code.
+    </p>
+    <div class="methodology-grid">
+      <div class="method-badge">
+        <div class="mb-num">1</div>
+        <h5>Task-Driven</h5>
+        <p>Every feature broken into discrete, trackable micro-tasks</p>
+      </div>
+      <div class="method-badge">
+        <div class="mb-num">2</div>
+        <h5>Test First</h5>
+        <p>Every feature tested immediately before proceeding</p>
+      </div>
+      <div class="method-badge">
+        <div class="mb-num">3</div>
+        <h5>Small Changes</h5>
+        <p>One logical change per commit for clean history</p>
+      </div>
+      <div class="method-badge">
+        <div class="mb-num">4</div>
+        <h5>Quality Over Speed</h5>
+        <p>Correctness and reliability over shipping fast</p>
+      </div>
+      <div class="method-badge">
+        <div class="mb-num">5</div>
+        <h5>Isolated Execution</h5>
+        <p>Each task is a clean, independent unit of work</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- === Section: The Build Timeline === -->
+  <div class="journey-section">
+    <h2><span class="section-icon">&#128197;</span> The Build Timeline</h2>
+    <p class="section-lead">
+      From initial architecture planning to a production-ready scanner with 47 passing tests &mdash; here is how AutoADA evolved through 8 sub-phases of deliberate, incremental engineering.
+    </p>
+
+    <div class="journey-timeline">
+
+      <!-- Phase 0: Planning -->
+      <div class="timeline-phase">
+        <div class="timeline-dot planning">P</div>
+        <h3>Phase 0: Architecture &amp; Research</h3>
+        <div class="phase-meta">Planning Session &bull; Foundation</div>
+        <p>
+          Before writing a single line of code, extensive research was conducted into axe-core's iframe and shadow DOM support, Puppeteer request interception patterns, WebAIM Million 2025 data, and WCAG 2.2 success criteria mapping. A detailed 21-task plan across 8 sub-phases was created. Key discovery: axe-core's modern mode already handles iframes and shadow DOM &mdash; a finding that saved an entire sprint of unnecessary re-implementation.
+        </p>
+        <div class="phase-tags">
+          <span class="phase-tag">axe-core research</span>
+          <span class="phase-tag">WCAG 2.2 mapping</span>
+          <span class="phase-tag">WebAIM Million 2025</span>
+          <span class="phase-tag">21-task plan</span>
+        </div>
+      </div>
+
+      <!-- Sub-Phase 2.1: Bug Fixes -->
+      <div class="timeline-phase">
+        <div class="timeline-dot fixing">1</div>
+        <h3>Sub-Phase 2.1: Bug Fixes &amp; Data Corrections</h3>
+        <div class="phase-meta">2 Tasks &bull; Data Integrity</div>
+        <p>
+          Found and fixed a duplicate key bug in the scoring engine (<code>cat.time-and-media</code> appeared twice, causing WCAG principle misclassification). Updated industry benchmarks with WebAIM Million 2025 data &mdash; the most comprehensive accessibility survey available, covering 1 million homepages.
+        </p>
+        <div class="phase-tags">
+          <span class="phase-tag">score.js duplicate key fix</span>
+          <span class="phase-tag">benchmarks.json update</span>
+          <span class="phase-tag">dashboard stat correction</span>
+        </div>
+      </div>
+
+      <!-- Sub-Phase 2.2: Scoring -->
+      <div class="timeline-phase">
+        <div class="timeline-dot building">2</div>
+        <h3>Sub-Phase 2.2: Scoring Accuracy Overhaul</h3>
+        <div class="phase-meta">2 Tasks &bull; Core Algorithm</div>
+        <p>
+          The original scoring weighted by rule count, not node count &mdash; meaning a site with 1 rule affecting 500 elements scored the same as 1 rule affecting 1 element. The entire scoring algorithm was rewritten with severity-weighted logarithmic penalties scaled by affected nodes. A double-penalization bug was caught and fixed during development: the initial rewrite weighted severity in both the base score AND the penalty, producing scores of 0 for any site with violations.
+        </p>
+        <div class="phase-tags">
+          <span class="phase-tag">node-count weighting</span>
+          <span class="phase-tag">logarithmic penalties</span>
+          <span class="phase-tag">incomplete rules as "Needs Review"</span>
+          <span class="phase-tag">double-penalty bug caught</span>
+        </div>
+      </div>
+
+      <!-- Sub-Phase 2.3: Scanner Reliability -->
+      <div class="timeline-phase">
+        <div class="timeline-dot building">3</div>
+        <h3>Sub-Phase 2.3: Scanner Reliability &amp; Performance</h3>
+        <div class="phase-meta">4 Tasks &bull; Complete Scanner Rewrite</div>
+        <p>
+          The entire scanner was rewritten. Page loads dropped from 4 to 2 per URL by scanning before and after overlay dismissal in a single load. Request interception blocks images, fonts, media, and tracker domains to reduce bandwidth and improve speed. A retry mechanism with exponential backoff (2s, 4s delays) handles transient failures. Popup dismissal was made intelligent: buttons are now verified to be inside modal containers before clicking, preventing accidental navigation.
+        </p>
+        <div class="phase-tags">
+          <span class="phase-tag">4&#8594;2 page loads</span>
+          <span class="phase-tag">request interception</span>
+          <span class="phase-tag">exponential backoff retries</span>
+          <span class="phase-tag">smart popup dismissal</span>
+        </div>
+      </div>
+
+      <!-- Sub-Phase 2.4: Coverage -->
+      <div class="timeline-phase">
+        <div class="timeline-dot building">4</div>
+        <h3>Sub-Phase 2.4: Scanner Coverage Expansion</h3>
+        <div class="phase-meta">3 Tasks &bull; New Capabilities</div>
+        <p>
+          Added three major capabilities: iframe and shadow DOM violation tagging (each violation node is now tagged with its context), link-based BFS crawling with robots.txt parsing for sites without sitemaps, and interactive state scanning that expands accordions, tabs, and hidden content to find violations inside collapsed elements. All features are opt-in via CLI flags to maintain backward compatibility.
+        </p>
+        <div class="phase-tags">
+          <span class="phase-tag">--crawl flag</span>
+          <span class="phase-tag">--interactive flag</span>
+          <span class="phase-tag">robots.txt parsing</span>
+          <span class="phase-tag">iframe/shadow DOM tagging</span>
+        </div>
+      </div>
+
+      <!-- Sub-Phase 2.5: False Positives -->
+      <div class="timeline-phase">
+        <div class="timeline-dot fixing">5</div>
+        <h3>Sub-Phase 2.5: False Positive Reduction</h3>
+        <div class="phase-meta">2 Tasks &bull; Accuracy Engineering</div>
+        <p>
+          Created an entirely new confidence scoring module. Every violation is classified as high, medium, or low confidence based on the rule's determinism. Contextual checks further adjust at the node level: <code>alt=""</code> on decorative images is correctly identified, contrast issues on elements with <code>background-image</code> are flagged as needs-review, and ARIA patterns with dynamic toggles are detected. This single feature transformed the scanner from "noisy" to "trustworthy."
+        </p>
+        <div class="phase-tags">
+          <span class="phase-tag">confidence.js module</span>
+          <span class="phase-tag">high/medium/low classification</span>
+          <span class="phase-tag">contextual node-level checks</span>
+          <span class="phase-tag">85% penalty reduction for low-confidence</span>
+        </div>
+      </div>
+
+      <!-- Sub-Phase 2.6: Reports -->
+      <div class="timeline-phase">
+        <div class="timeline-dot polishing">6</div>
+        <h3>Sub-Phase 2.6: Report Quality</h3>
+        <div class="phase-meta">4 Tasks &bull; Client-Ready Output</div>
+        <p>
+          Created a complete WCAG 2.2 success criteria mapping (55 Level A+AA criteria with legal relevance). Enhanced the executive summary with risk assessment, key metrics, and priority actions. Rewrote the screenshotter for multi-region capture &mdash; scrolling to violation clusters instead of a single viewport shot. Added per-page breakdowns with individual scores for multi-page scans.
+        </p>
+        <div class="phase-tags">
+          <span class="phase-tag">wcag-map.json (55 criteria)</span>
+          <span class="phase-tag">risk assessment</span>
+          <span class="phase-tag">multi-region screenshots</span>
+          <span class="phase-tag">per-page scoring</span>
+        </div>
+      </div>
+
+      <!-- Sub-Phase 2.7: Infrastructure -->
+      <div class="timeline-phase">
+        <div class="timeline-dot building">7</div>
+        <h3>Sub-Phase 2.7: Infrastructure &amp; Performance</h3>
+        <div class="phase-meta">3 Tasks &bull; Production Readiness</div>
+        <p>
+          Fixed a memory leak in the scan store with TTL-based cleanup (30min expiry). Added concurrent page scanning with configurable parallelism. Implemented axe-core configuration support so teams can disable specific rules or target specific page regions. Added a 429 rate limit for concurrent scans.
+        </p>
+        <div class="phase-tags">
+          <span class="phase-tag">memory leak fix</span>
+          <span class="phase-tag">--concurrency flag</span>
+          <span class="phase-tag">--axe-config flag</span>
+          <span class="phase-tag">429 rate limiting</span>
+        </div>
+      </div>
+
+      <!-- Sub-Phase 2.8: Dashboard -->
+      <div class="timeline-phase">
+        <div class="timeline-dot polishing">8</div>
+        <h3>Sub-Phase 2.8: Dashboard UI Enhancement</h3>
+        <div class="phase-meta">1 Task &bull; Usability</div>
+        <p>
+          Added a manual testing checklist to the dashboard with 8 static items (keyboard navigation, screen reader testing, zoom, form validation, etc.) and dynamic items generated from scan results. Checklist state persists across sessions. A progress bar tracks completion.
+        </p>
+        <div class="phase-tags">
+          <span class="phase-tag">manual testing checklist</span>
+          <span class="phase-tag">dynamic items from scan</span>
+          <span class="phase-tag">sessionStorage persistence</span>
+        </div>
+      </div>
+
+      <!-- Post-Phase: Real-World Testing -->
+      <div class="timeline-phase">
+        <div class="timeline-dot testing">&#10003;</div>
+        <h3>Post-Build: Real-World Testing &amp; Bug Fixing</h3>
+        <div class="phase-meta">47 Tests &bull; 11 Test Phases &bull; 6 Bugs Fixed</div>
+        <p>
+          Executed a comprehensive 47-test plan across 11 phases covering scoring, confidence, scanner features, crawler, reports, dashboard, screenshots, edge cases, and real-world accuracy. Discovered and fixed 6 bugs including unreachable domain handling, keyboard trap false positives, Cloudflare detection tightening, and screenshot quality issues. Every fix was regression-tested before moving forward.
+        </p>
+        <div class="phase-tags">
+          <span class="phase-tag">47 tests</span>
+          <span class="phase-tag">5 real-world sites</span>
+          <span class="phase-tag">11 test phases</span>
+          <span class="phase-tag">6 bugs fixed</span>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- === Section: Challenges & Solutions === -->
+  <div class="journey-section">
+    <h2><span class="section-icon">&#128293;</span> Challenges We Solved</h2>
+    <p class="section-lead">
+      Each of these problems was a real blocker discovered during development. They represent the difference between a prototype that works on <code>example.com</code> and a production scanner that handles the real web.
+    </p>
+
+    <div class="challenge-grid">
+
+      <div class="challenge-card challenge-cloudflare">
+        <div class="challenge-label">Challenge #1</div>
+        <h4>Cloudflare Bot Detection</h4>
+        <div class="challenge-problem">
+          Sites behind Cloudflare showed "Just a moment..." challenge pages to Puppeteer. The scanner detected <code>meta-refresh</code> on the challenge page instead of real violations. Score was 18 (fake) instead of 28 (real).
+        </div>
+        <div class="challenge-solution">
+          Integrated <code>puppeteer-extra</code> with stealth plugin to evade headless detection. Added a challenge resolution detector that polls for up to 15 seconds for Cloudflare to clear, checking title, DOM elements, and meta-refresh patterns.
+        </div>
+        <div class="challenge-impact">Impact: Sites like hereticparfum.com went from fake results to real 6-violation, 33-pass audits.</div>
+      </div>
+
+      <div class="challenge-card challenge-scoring">
+        <div class="challenge-label">Challenge #2</div>
+        <h4>Double-Penalization Scoring Bug</h4>
+        <div class="challenge-problem">
+          During the scoring rewrite, severity was being weighted in both the base score AND the penalty calculation. This produced scores of 0 for any site with even minor violations &mdash; completely unusable.
+        </div>
+        <div class="challenge-solution">
+          Isolated severity to the penalty calculation only. Base score now uses node count weighting while penalties apply logarithmic severity scaling. Verified with a 56-point gap test: same violations scored 56 at low confidence vs 0 at high.
+        </div>
+        <div class="challenge-impact">Impact: Scoring now accurately reflects violation severity without mathematical artifacts.</div>
+      </div>
+
+      <div class="challenge-card challenge-fps">
+        <div class="challenge-label">Challenge #3</div>
+        <h4>False Positive Epidemic</h4>
+        <div class="challenge-problem">
+          <code>color-contrast</code> violations on elements with background images, decorative <code>alt=""</code> images flagged as missing alt text, and ARIA hidden elements with <code>tabindex=-1</code> reported as focus traps. Noise destroyed report credibility.
+        </div>
+        <div class="challenge-solution">
+          Built a multi-layer confidence system: rule-level classification (deterministic vs. heuristic), node-level context checks (inspecting actual CSS properties, DOM structure), and confidence-weighted scoring where low-confidence violations penalize only 15% vs 100% for confirmed.
+        </div>
+        <div class="challenge-impact">Impact: Reports went from "noisy and unreliable" to "trustworthy with clear confidence levels."</div>
+      </div>
+
+      <div class="challenge-card challenge-screenshots">
+        <div class="challenge-label">Challenge #4</div>
+        <h4>Gray/Empty Screenshots</h4>
+        <div class="challenge-problem">
+          Request interception blocked images for performance &mdash; but this meant screenshots showed gray boxes instead of actual page content. Additionally, marketing popups (Klaviyo, Shopify) appeared in every screenshot.
+        </div>
+        <div class="challenge-solution">
+          Removed images from the blocked resource types list. Added Klaviyo/Shopify-specific dismiss selectors. Rewrote overlay dismissal with a 4-strategy approach: overlay-checked click, relaxed click, accept fallback, and DOM force-removal of fixed overlays with z-index > 999.
+        </div>
+        <div class="challenge-impact">Impact: Screenshots went from 0KB empty images to 330&ndash;390KB rich captures showing actual page content.</div>
+      </div>
+
+      <div class="challenge-card challenge-traps">
+        <div class="challenge-label">Challenge #5</div>
+        <h4>Keyboard Trap False Positives</h4>
+        <div class="challenge-problem">
+          Keyboard trap detection used viewport-relative coordinates, so scrolled-off elements at the same screen position were falsely identified as the same element in a "trap." Additionally, pages that navigated during Tab cycling caused "Execution context destroyed" crashes.
+        </div>
+        <div class="challenge-solution">
+          Switched to absolute page positions using <code>scrollY</code>/<code>scrollX</code>. Added minimum 3-unique-elements check. Added Shift+Tab escape verification (real traps don't escape). Wrapped each Tab cycle in try/catch with context-destruction detection for graceful abort.
+        </div>
+        <div class="challenge-impact">Impact: Zero false keyboard traps on GOV.UK, a11yproject, and example.com &mdash; all clean.</div>
+      </div>
+
+      <div class="challenge-card challenge-crawling">
+        <div class="challenge-label">Challenge #6</div>
+        <h4>Sitemap Blocked by Cloudflare</h4>
+        <div class="challenge-problem">
+          Sites behind Cloudflare or with restricted sitemaps returned HTTP 403 to Node.js default user-agent. Result: only 1 page scanned. The <code>--crawl</code> flag existed but was not discoverable.
+        </div>
+        <div class="challenge-solution">
+          Added realistic Chrome user-agent headers to sitemap fetching. Rewrote link crawling from Puppeteer-based to lightweight HTTP-based BFS (faster, more reliable). Auto-enabled crawling when sitemap returns 0 pages &mdash; no flag needed.
+        </div>
+        <div class="challenge-impact">Impact: hereticparfum.com went from 0 discovered pages to 20 pages via sitemap.</div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- === Section: Testing Evidence === -->
+  <div class="journey-section">
+    <h2><span class="section-icon">&#9989;</span> Testing Evidence</h2>
+    <p class="section-lead">
+      AutoADA was validated through a comprehensive 47-test plan across 11 phases, tested against 5 real-world websites spanning government, accessibility-focused, deliberately broken, e-commerce, and standard sites.
+    </p>
+
+    <div class="testing-summary">
+      <div class="testing-row">
+        <div class="testing-metric">
+          <div class="tm-value green">47</div>
+          <div class="tm-label">Total Tests</div>
+        </div>
+        <div class="testing-metric">
+          <div class="tm-value green">43</div>
+          <div class="tm-label">Passed</div>
+        </div>
+        <div class="testing-metric">
+          <div class="tm-value orange">4</div>
+          <div class="tm-label">Edge Cases Noted</div>
+        </div>
+        <div class="testing-metric">
+          <div class="tm-value blue">91%</div>
+          <div class="tm-label">Pass Rate</div>
+        </div>
+      </div>
+
+      <div style="font-size:13px; color:var(--text-dim); text-align:center; margin-bottom:16px;">
+        Real-world validation across diverse site architectures
+      </div>
+
+      <div class="test-sites-grid">
+        <div class="test-site">
+          <div class="ts-name">GOV.UK</div>
+          <div class="ts-score excellent">100</div>
+          <div style="font-size:11px; color:var(--text-dim);">Gold standard</div>
+        </div>
+        <div class="test-site">
+          <div class="ts-name">A11Y Project</div>
+          <div class="ts-score excellent">100</div>
+          <div style="font-size:11px; color:var(--text-dim);">Accessibility-focused</div>
+        </div>
+        <div class="test-site">
+          <div class="ts-name">the-internet</div>
+          <div class="ts-score good">88</div>
+          <div style="font-size:11px; color:var(--text-dim);">Test harness</div>
+        </div>
+        <div class="test-site">
+          <div class="ts-name">Heretic Parfum</div>
+          <div class="ts-score needs-improvement">69</div>
+          <div style="font-size:11px; color:var(--text-dim);">E-commerce + CF</div>
+        </div>
+        <div class="test-site">
+          <div class="ts-name">Deque Mars</div>
+          <div class="ts-score poor">33</div>
+          <div style="font-size:11px; color:var(--text-dim);">Deliberately broken</div>
+        </div>
+      </div>
+      <div style="text-align:center; margin-top:16px; font-size:12px; color:var(--text-dim);">
+        Score ordering validated: best-practice sites (100) &gt; typical sites (69&ndash;88) &gt; intentionally broken (33)
+      </div>
+    </div>
+  </div>
+
+  <!-- === Section: Architecture at a Glance === -->
+  <div class="journey-section">
+    <h2><span class="section-icon">&#128736;</span> Architecture at a Glance</h2>
+    <p class="section-lead">
+      AutoADA is composed of purpose-built modules, each handling a specific concern. This separation ensures maintainability and allows individual components to evolve independently.
+    </p>
+
+    <div style="background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 24px 28px; font-family: 'SF Mono', 'Fira Code', monospace; font-size: 13px; line-height: 1.9; overflow-x: auto;">
+      <div style="color: var(--text-dim);">src/</div>
+      <div>&nbsp;&nbsp;<span style="color: var(--accent-light);">index.js</span> <span style="color: var(--text-dim);">&mdash; CLI entry (Commander.js, 11 flags)</span></div>
+      <div>&nbsp;&nbsp;<span style="color: var(--accent-light);">server.js</span> <span style="color: var(--text-dim);">&mdash; Express API + SSE streaming + TTL cleanup</span></div>
+      <div>&nbsp;&nbsp;<span style="color: var(--accent-light);">scanner.js</span> <span style="color: var(--text-dim);">&mdash; Puppeteer + axe-core + stealth + SPA detection</span></div>
+      <div>&nbsp;&nbsp;<span style="color: var(--accent-light);">crawler.js</span> <span style="color: var(--text-dim);">&mdash; Sitemap + BFS link crawl + robots.txt</span></div>
+      <div>&nbsp;&nbsp;<span style="color: var(--accent-light);">score.js</span> <span style="color: var(--text-dim);">&mdash; Confidence-weighted scoring + benchmarks</span></div>
+      <div>&nbsp;&nbsp;<span style="color: var(--accent-light);">confidence.js</span> <span style="color: var(--text-dim);">&mdash; Rule + node-level FP detection</span></div>
+      <div>&nbsp;&nbsp;<span style="color: var(--accent-light);">screenshotter.js</span> <span style="color: var(--text-dim);">&mdash; Multi-region capture with severity overlays</span></div>
+      <div>&nbsp;&nbsp;<span style="color: var(--text-dim);">reporters/</span></div>
+      <div>&nbsp;&nbsp;&nbsp;&nbsp;<span style="color: var(--pass);">html.js</span> <span style="color: var(--text-dim);">&mdash; Self-contained report with WCAG SC details</span></div>
+      <div>&nbsp;&nbsp;&nbsp;&nbsp;<span style="color: var(--pass);">pdf.js</span> <span style="color: var(--text-dim);">&mdash; Print-ready via Puppeteer HTML&#8594;PDF</span></div>
+      <div>&nbsp;&nbsp;&nbsp;&nbsp;<span style="color: var(--pass);">json.js</span> <span style="color: var(--text-dim);">&mdash; Complete raw data export</span></div>
+      <div>&nbsp;&nbsp;&nbsp;&nbsp;<span style="color: var(--pass);">csv.js</span> <span style="color: var(--text-dim);">&mdash; Per-element table for spreadsheets</span></div>
+      <div>&nbsp;&nbsp;<span style="color: var(--text-dim);">data/</span></div>
+      <div>&nbsp;&nbsp;&nbsp;&nbsp;<span style="color: var(--moderate);">wcag-map.json</span> <span style="color: var(--text-dim);">&mdash; 55 WCAG 2.2 A+AA criteria mapped</span></div>
+      <div>&nbsp;&nbsp;&nbsp;&nbsp;<span style="color: var(--moderate);">benchmarks.json</span> <span style="color: var(--text-dim);">&mdash; WebAIM Million 2025 data</span></div>
+      <div>&nbsp;&nbsp;&nbsp;&nbsp;<span style="color: var(--moderate);">false-positives.json</span> <span style="color: var(--text-dim);">&mdash; FP metadata per axe-core rule</span></div>
+      <div>&nbsp;&nbsp;&nbsp;&nbsp;<span style="color: var(--moderate);">remediation.json</span> <span style="color: var(--text-dim);">&mdash; Fix guidance + code examples</span></div>
+      <div>&nbsp;&nbsp;<span style="color: var(--text-dim);">web/</span></div>
+      <div>&nbsp;&nbsp;&nbsp;&nbsp;<span style="color: #e056fd;">index.html</span> <span style="color: var(--text-dim);">&mdash; SPA dashboard (this file)</span></div>
+    </div>
+  </div>
+
+  <!-- === Section: Key Design Decisions === -->
+  <div class="journey-section">
+    <h2><span class="section-icon">&#128161;</span> Key Design Decisions &amp; Why</h2>
+    <p class="section-lead">
+      Every significant technical decision in AutoADA was made deliberately to solve a specific problem. Here is the reasoning behind the most important choices.
+    </p>
+
+    <div style="display:grid; gap:16px;">
+
+      <div style="background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); padding:20px 24px;">
+        <div style="display:flex; align-items:center; gap:12px; margin-bottom:8px;">
+          <span style="color:var(--accent-light); font-size:18px;">&#9670;</span>
+          <h4 style="font-size:15px; font-weight:700;">Why Confidence-Weighted Scoring?</h4>
+        </div>
+        <p style="font-size:13px; color:var(--text-dim); line-height:1.6;">Because a <code>color-contrast</code> violation on an element with <code>background-image</code> is almost certainly a false positive. Without confidence weighting, a site with 50 contrast false positives and 0 real issues would score 20/100. With confidence weighting, low-confidence violations penalize only 15%, so the same site scores 85+. This matches reality.</p>
+      </div>
+
+      <div style="background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); padding:20px 24px;">
+        <div style="display:flex; align-items:center; gap:12px; margin-bottom:8px;">
+          <span style="color:var(--accent-light); font-size:18px;">&#9670;</span>
+          <h4 style="font-size:15px; font-weight:700;">Why Puppeteer-Extra with Stealth?</h4>
+        </div>
+        <p style="font-size:13px; color:var(--text-dim); line-height:1.6;">A significant percentage of modern websites use Cloudflare or similar WAFs that detect and block headless browsers. Standard Puppeteer is immediately identified and served challenge pages. The stealth plugin patches Chrome's navigator properties, WebGL, and other fingerprinting vectors to appear as a regular browser. Without it, AutoADA would be unable to scan a large portion of the web.</p>
+      </div>
+
+      <div style="background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); padding:20px 24px;">
+        <div style="display:flex; align-items:center; gap:12px; margin-bottom:8px;">
+          <span style="color:var(--accent-light); font-size:18px;">&#9670;</span>
+          <h4 style="font-size:15px; font-weight:700;">Why SPA Framework Detection?</h4>
+        </div>
+        <p style="font-size:13px; color:var(--text-dim); line-height:1.6;">React, Vue, and Next.js render content asynchronously. A scanner that runs immediately after <code>DOMContentLoaded</code> misses dynamically rendered content. AutoADA detects the framework in use and employs a MutationObserver-based DOM stability check &mdash; waiting until 1 full second passes with no DOM mutations. This ensures the scan captures the fully-rendered page state.</p>
+      </div>
+
+      <div style="background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); padding:20px 24px;">
+        <div style="display:flex; align-items:center; gap:12px; margin-bottom:8px;">
+          <span style="color:var(--accent-light); font-size:18px;">&#9670;</span>
+          <h4 style="font-size:15px; font-weight:700;">Why Dual Viewport Testing?</h4>
+        </div>
+        <p style="font-size:13px; color:var(--text-dim); line-height:1.6;">Responsive designs frequently introduce accessibility regressions at mobile breakpoints: hamburger menus without keyboard support, touch targets smaller than 24px, and content hidden behind collapsed navigation. Scanning at both 1280px desktop and 375px mobile viewports catches issues that single-viewport scanners miss entirely.</p>
+      </div>
+
+      <div style="background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); padding:20px 24px;">
+        <div style="display:flex; align-items:center; gap:12px; margin-bottom:8px;">
+          <span style="color:var(--accent-light); font-size:18px;">&#9670;</span>
+          <h4 style="font-size:15px; font-weight:700;">Why the Score Disclaimer?</h4>
+        </div>
+        <p style="font-size:13px; color:var(--text-dim); line-height:1.6;">Automated scanning can only evaluate 30&ndash;40% of WCAG 2.2 criteria. The remaining 60%+ require human judgment (screen reader testing, cognitive load, content clarity). AutoADA prominently disclaims this in every report and dashboard view. Transparency builds trust; overpromising destroys it.</p>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- CTA -->
+  <div class="journey-cta">
+    <h2>Built to Be Trusted</h2>
+    <p>
+      AutoADA was not built to check a box. It was built to produce audit results that teams can act on, stakeholders can rely on, and organizations can present with confidence.
+    </p>
+    <button class="btn-cta" onclick="showView('scan')">Try AutoADA Now</button>
+  </div>
+
+  <!-- Footer -->
+  <div class="landing-footer">
+    Built by <span>Tushar Tomar</span> at <span>IT GEEKS</span> &middot; Powered by axe-core &middot; WCAG 2.2 Level AA
+  </div>
+
+</div><!-- end viewJourney -->
+
 </div><!-- end container -->
 
 <!-- Lightbox -->
@@ -993,11 +1638,13 @@ let principleChartInstance = null;
 function showView(name) {
   document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
   document.getElementById('view' + name.charAt(0).toUpperCase() + name.slice(1)).classList.add('active');
-  document.getElementById('btnNewScan').style.display = (name === 'dashboard' || name === 'about') ? 'block' : 'none';
+  document.getElementById('btnNewScan').style.display = (name === 'dashboard' || name === 'about' || name === 'journey') ? 'block' : 'none';
   document.getElementById('btnAbout').classList.toggle('active', name === 'about');
+  document.getElementById('btnJourney').classList.toggle('active', name === 'journey');
   if (name === 'scan') {
     clearInterval(elapsedInterval);
-    currentScanId = null;
+    // Do NOT clear currentScanId — it's needed for exports even after navigating away.
+    // It gets replaced naturally when a new scan starts.
   }
 }
 
@@ -1120,6 +1767,11 @@ function listenProgress(scanId) {
         addLog(`Error: ${data.url} — ${data.error}`, true);
         break;
 
+      case 'cloudflare-abort':
+        document.getElementById('progressStatus').textContent = 'Cloudflare rate-limiting detected — processing scanned pages...';
+        addLog(data.message, true);
+        break;
+
       case 'aggregating':
       case 'scoring':
         document.getElementById('progressBar').style.width = '95%';
@@ -1150,9 +1802,36 @@ function listenProgress(scanId) {
   es.onerror = () => {
     es.close();
     clearInterval(elapsedInterval);
-    document.getElementById('progressStatus').textContent = 'Connection lost. Please try again.';
-    document.getElementById('btnStart').disabled = false;
-    addLog('Connection to server lost.', true);
+    addLog('Connection to server lost. Checking for results...', true);
+    document.getElementById('progressStatus').textContent = 'Connection lost. Checking for results...';
+
+    // The scan may have completed before the SSE dropped — try loading results
+    if (currentScanId) {
+      fetch('/api/scan/' + currentScanId + '/results')
+        .then(res => {
+          if (res.ok) return res.json();
+          throw new Error('Not ready');
+        })
+        .then(data => {
+          if (data.scanResult && data.scores) {
+            scanResults = data.scanResult;
+            scanScores = data.scores;
+            addLog('Results recovered successfully!');
+            renderDashboard();
+            showView('dashboard');
+            return;
+          }
+          throw new Error('Incomplete');
+        })
+        .catch(() => {
+          document.getElementById('progressStatus').textContent = 'Connection lost. Please try again.';
+          document.getElementById('btnStart').disabled = false;
+          addLog('Could not recover results. Please re-run the scan.', true);
+        });
+    } else {
+      document.getElementById('progressStatus').textContent = 'Connection lost. Please try again.';
+      document.getElementById('btnStart').disabled = false;
+    }
   };
 }
 
@@ -1686,8 +2365,16 @@ function formatTarget(target) {
 
 // ===== Export =====
 async function exportReport(format, btn) {
-  if (!currentScanId) return;
-  if (btn) { btn.disabled = true; btn.textContent = '...'; }
+  if (!currentScanId) {
+    alert('No scan data available. Please run a scan first.');
+    return;
+  }
+  if (!scanResults) {
+    alert('Results not loaded yet. Please wait for the scan to complete.');
+    return;
+  }
+  if (btn) { btn.disabled = true; btn.textContent = 'Exporting...'; }
+  let blobUrl = null;
   try {
     const res = await fetch('/api/scan/' + currentScanId + '/export/' + format);
     if (!res.ok) {
@@ -1695,19 +2382,25 @@ async function exportReport(format, btn) {
       throw new Error(err.error || 'Export failed');
     }
     const blob = await res.blob();
-    const url = URL.createObjectURL(blob);
+    blobUrl = URL.createObjectURL(blob);
     const a = document.createElement('a');
-    a.href = url;
-    const hostname = new URL(scanResults.url).hostname.replace(/[^a-z0-9]/gi, '-');
-    const dateStr = new Date().toISOString().slice(0, 10);
-    a.download = hostname + '-ada-report-' + dateStr + '.' + format;
+    a.href = blobUrl;
+    let filename;
+    try {
+      const hostname = new URL(scanResults.url).hostname.replace(/[^a-z0-9]/gi, '-');
+      const dateStr = new Date().toISOString().slice(0, 10);
+      filename = hostname + '-ada-report-' + dateStr + '.' + format;
+    } catch {
+      filename = 'ada-report-' + new Date().toISOString().slice(0, 10) + '.' + format;
+    }
+    a.download = filename;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
-    URL.revokeObjectURL(url);
   } catch (err) {
     alert('Export failed: ' + err.message);
   } finally {
+    if (blobUrl) URL.revokeObjectURL(blobUrl);
     if (btn) { btn.disabled = false; btn.textContent = format.toUpperCase(); }
   }
 }

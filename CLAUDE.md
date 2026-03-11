@@ -352,3 +352,38 @@ Every task follows this flow:
   - HTML report: Added score disclaimer ("Automated Scan Score — ~30-40% of WCAG 2.2 criteria"), confidence badges (Confirmed/Likely/Needs Verification) on each violation card, confirmed/review metrics row (4 cards), sort violations by confidence then severity
   - Dashboard: Added score disclaimer under gauge, confidence stats row (4 cards), Confidence column in violations table with sort support, default sort changed from severity to confidence
 - **Testing**: example.com scan passes (score 100, 0 violations, 9 passes). JSON output contains new confidence fields. HTML report contains disclaimer, badges, metrics. Dashboard JS syntax valid. Confidence weighting verified: low-confidence violations score 56 vs 0 for same high-confidence violations.
+
+### Session 2026-03-10 — Comprehensive Test Plan Execution (47 Tests, 11 Phases)
+- **Created**: `TEST-PLAN.md` — 47 automated tests across 11 phases covering scoring, confidence, scanner features, crawler, reports, dashboard, screenshots, edge cases, real-world accuracy, and CLI flags
+- **Bug fixes during testing**:
+  - `src/scanner.js` `detectKeyboardTraps()`: Fixed false positives — switched from viewport-relative `getBoundingClientRect()` to absolute page positions (`scrollY`/`scrollX`) so scrolled-off elements with same viewport coordinates aren't confused. Added `uniqueKey = selector + '@' + absTop:absLeft`. Added minimum 3 unique elements check before declaring a trap. Added Shift+Tab escape verification (real trap = Shift+Tab returns to same element).
+  - `src/scanner.js` `waitForChallengeResolution()`: Tightened Cloudflare detection — removed generic `meta[http-equiv="refresh"]` match (was triggering on non-CF pages). Now requires strong CF indicators: title containing "just a moment"/"attention required", CF-specific DOM elements (`#challenge-running`, `#challenge-form`, `.cf-browser-verification`, `#cf-wrapper`), or `cdn-cgi` in meta-refresh content.
+- **Files committed**: `src/scanner.js`, `TEST-PLAN.md`
+- **Test Results Summary (47 tests)**:
+  - Phase 1 (Real-World Scoring): ✅ All pass — GOV.UK=100, a11yproject=100, Deque Mars=33, the-internet=88, hereticparfum=69
+  - Phase 2 (Confidence Scoring): ✅ All 4 pass — confidence fields on all violations, 56-point gap between low/high confidence, FP notes present, confirmed+review=total
+  - Phase 3 (Scanner Features): ✅ 7/8 pass — dual viewport, SPA detection (partial: Vue detected, Next.js not), interactive scanning (10 expandables found), no false keyboard traps, request interception working; retry logic inconclusive
+  - Phase 4 (Crawler): ✅ All 4 pass — sitemap discovery, auto-crawl fallback, --crawl with robots.txt, extra URLs file
+  - Phase 5 (Reports): ✅ All 6 pass — JSON, CSV, HTML, PDF, all-at-once, client branding
+  - Phase 6 (Dashboard/API): ✅ 5/7 pass — server, API, export formats, SSE streaming, concurrent limit; UI tests not automated
+  - Phase 7 (Scoring Accuracy): ✅ All 4 pass — score ranges, severity breakdown, all 4 principles, benchmark context
+  - Phase 8 (Screenshots): ✅ Pass — base64 PNGs embedded in HTML reports (JSON intentionally strips for file size)
+  - Phase 9 (Edge Cases): ✅ 5/6 pass — invalid URL, empty page, concurrent scanning, axe-config; **BUG: unreachable domains scan browser error page**
+  - Phase 10 (Real-World Accuracy): ✅ All 3 pass — score ordering correct: good sites (100) > bad sites (33-70)
+  - Phase 11 (CLI Flags): ✅ All 2 pass — all flags together, exit codes (0=clean, 1=violations)
+- **Known bugs discovered**:
+  1. Unreachable domains (e.g., `thisdomaindoesnotexist12345.com`) scan the browser's error page instead of reporting a scan failure — produces score 88 instead of an error
+  2. Keyboard trap detection says "Execution context was destroyed" on Deque Mars (page navigates during Tab cycling)
+  3. Framework detection doesn't detect Next.js on vercel.com (but DOM stability wait still works correctly)
+  4. Keyboard trap detected on hereticparfum.com/products/discovery-set — needs investigation (may be real or false positive)
+
+### Session 2026-03-10 — Bug Fixes: Unreachable Domains + Keyboard Trap Crashes
+- **Bug 1 Fix — Unreachable domains**: Previously, scanning `thisdomaindoesnotexist12345.com` produced score 88 by scanning the browser's error page. Now `loadPageDefensively()` detects unreachable pages via: (1) catching DNS/connection errors from `page.goto()` and throwing immediately, (2) checking if browser navigated to `chrome-error://` or `about:blank`, (3) detecting browser error page content patterns ("This site can't be reached", "ERR_NAME_NOT_RESOLVED", etc.). `withRetry()` skips retries for "Page unreachable" errors. `scanPage()` sets `error` field when both viewports fail. CLI displays "⚠ Unreachable" warning with error details.
+- **Bug 2 Fix — Keyboard trap context destruction**: On pages where Tab keypress causes navigation (e.g., Deque Mars), `page.evaluate()` threw "Execution context was destroyed". Fixed by wrapping each Tab+evaluate cycle in individual try/catch. When context-destruction errors are detected (message contains "Execution context", "detached", "Target closed", "Session closed"), detection aborts gracefully with empty result instead of crashing. Shift+Tab verification section also wrapped in try/catch.
+- **Files modified**:
+  - `src/scanner.js` — `loadPageDefensively()` with error page detection, `withRetry()` skips non-transient errors, `scanPage()` error field propagation, `detectKeyboardTraps()` resilient Tab cycling + Shift+Tab verification
+  - `src/index.js` — Added unreachable page warning display in `printSummary()`
+- **Testing**:
+  - `thisdomaindoesnotexist12345.com` → "Page unreachable: ERR_NAME_NOT_RESOLVED", error field in JSON, 0 violations, 0 passes (was: 88 score with fake violations)
+  - `example.com` regression → score 100, 9 passes ✅
+  - `gov.uk` → score 100, 31 passes, no false keyboard traps ✅

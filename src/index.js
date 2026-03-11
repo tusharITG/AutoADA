@@ -35,6 +35,15 @@ function printSummary(scanResult, scores) {
   console.log(`\n  ${chalk.bold('Overall Score:')} ${scoreColor.bold(overall + '/100')} ${scores.benchmarkContext?.label || ''}`);
   console.log(`  ${chalk.dim('Pages scanned:')} ${scanResult.pageCount}`);
 
+  // Show errored pages warning
+  const erroredPages = (scanResult.pages || []).filter((p) => p.error);
+  if (erroredPages.length > 0) {
+    console.log(`  ${chalk.red.bold('⚠ Unreachable:')} ${erroredPages.length} page(s) could not be scanned`);
+    for (const ep of erroredPages) {
+      console.log(`    ${chalk.red('✗')} ${ep.url}: ${ep.error}`);
+    }
+  }
+
   // Severity breakdown table
   console.log(`\n  ${chalk.bold('Severity Breakdown:')}`);
   console.log(`  ${chalk.bgRed.white.bold(' CRITICAL ')} ${severityBreakdown.critical}`);

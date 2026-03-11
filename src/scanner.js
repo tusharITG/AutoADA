@@ -88,6 +88,8 @@ async function withRetry(fn, maxRetries = 2, baseDelay = 2000) {
     try {
       return await fn();
     } catch (err) {
+      // Don't retry non-transient errors (DNS failure, unreachable host, etc.)
+      if (err.message && err.message.startsWith('Page unreachable:')) throw err;
       if (attempt === maxRetries) throw err;
       const delay = baseDelay * Math.pow(2, attempt); // 2s, 4s
       console.warn(`    Retry ${attempt + 1}/${maxRetries} after ${delay}ms: ${err.message}`);
@@ -134,22 +136,69 @@ async function enableRequestInterception(page) {
  * Doesn't rely solely on networkidle2 — uses a multi-step approach.
  */
 async function loadPageDefensively(page, url, timeout = 30000) {
+  let navigationFailed = false;
+
   // Step 1: Navigate with networkidle2 for better full-page loading
   try {
     await page.goto(url, {
       waitUntil: 'networkidle2',
       timeout,
     });
-  } catch {
+  } catch (err1) {
     // networkidle2 timeout — fall back to domcontentloaded
     try {
       await page.goto(url, {
         waitUntil: 'domcontentloaded',
         timeout: 15000,
       });
-    } catch {
-      // Even domcontentloaded failed — continue with whatever loaded
+    } catch (err2) {
+      // Even domcontentloaded failed — flag for error page check
+      navigationFailed = true;
+      // If both attempts failed with net::ERR_NAME_NOT_RESOLVED or similar, throw immediately
+      const msg = (err2.message || '') + ' ' + (err1.message || '');
+      if (msg.includes('ERR_NAME_NOT_RESOLVED') || msg.includes('ERR_CONNECTION_REFUSED') ||
+          msg.includes('ERR_CONNECTION_TIMED_OUT') || msg.includes('ERR_ADDRESS_UNREACHABLE') ||
+          msg.includes('ERR_NETWORK_CHANGED') || msg.includes('ERR_INTERNET_DISCONNECTED')) {
+        throw new Error(`Page unreachable: ${url} — ${err2.message}`);
+      }
     }
+  }
+
+  // Step 1b: Detect browser error pages (chrome-error://, about:neterror, etc.)
+  // When a domain is unreachable, the browser shows its own error page.
+  // We must NOT scan that — it produces fake violations on the error UI.
+  try {
+    const pageUrl = page.url();
+    if (pageUrl.startsWith('chrome-error://') || pageUrl === 'about:blank' || pageUrl === 'about:neterror') {
+      throw new Error(`Page unreachable: ${url} — browser showed error page (${pageUrl})`);
+    }
+    // Also detect standard browser error pages by content
+    const isErrorPage = await page.evaluate(() => {
+      const title = (document.title || '').toLowerCase();
+      const bodyText = (document.body?.innerText || '').toLowerCase().substring(0, 500);
+      // Chrome: "site can't be reached", Firefox: "problem loading page", Safari: "can't find server"
+      const errorPatterns = [
+        "this site can't be reached",
+        "this site can\u2019t be reached",
+        "err_name_not_resolved",
+        "err_connection_refused",
+        "err_connection_timed_out",
+        "err_address_unreachable",
+        "dns_probe_finished_nxdomain",
+        "problem loading page",
+        "can't find the server",
+        "server not found",
+        "webpage is not available",
+        "unable to connect",
+      ];
+      return errorPatterns.some((p) => title.includes(p) || bodyText.includes(p));
+    });
+    if (isErrorPage) {
+      throw new Error(`Page unreachable: ${url} — browser displayed a network error page`);
+    }
+  } catch (err) {
+    // Re-throw if it's our error, otherwise the page.evaluate() failed (acceptable)
+    if (err.message.startsWith('Page unreachable:')) throw err;
   }
 
   // Step 2: Detect and wait for Cloudflare/bot challenge pages
@@ -645,32 +694,48 @@ async function detectKeyboardTraps(page) {
     const uniqueElements = new Set(); // Track unique elements seen during tabbing
 
     for (let i = 0; i < MAX_TABS; i++) {
-      await page.keyboard.press('Tab');
-
-      const focusInfo = await page.evaluate(() => {
-        const el = document.activeElement;
-        if (!el || el === document.body || el === document.documentElement) {
-          return null;
+      // Wrap each Tab cycle in try/catch — on some pages, Tab causes navigation
+      // (e.g., clicking a link via Enter after Tab), which destroys the
+      // execution context. We abort gracefully instead of crashing.
+      let focusInfo;
+      try {
+        await page.keyboard.press('Tab');
+        focusInfo = await page.evaluate(() => {
+          const el = document.activeElement;
+          if (!el || el === document.body || el === document.documentElement) {
+            return null;
+          }
+          let selector = el.tagName.toLowerCase();
+          if (el.id) selector = '#' + el.id;
+          else if (el.className && typeof el.className === 'string' && el.className.trim()) {
+            selector += '.' + el.className.trim().split(/\s+/).slice(0, 2).join('.');
+          }
+          // Use absolute page position (not viewport-relative) to uniquely identify
+          // the element. Viewport-relative coords change as the browser auto-scrolls
+          // to focused elements, making different elements look like the same one.
+          const rect = el.getBoundingClientRect();
+          const absTop = Math.round(rect.top + window.scrollY);
+          const absLeft = Math.round(rect.left + window.scrollX);
+          const posKey = `${absTop}:${absLeft}`;
+          return {
+            selector,
+            posKey,
+            uniqueKey: selector + '@' + posKey,
+            html: el.outerHTML.substring(0, 250),
+          };
+        });
+      } catch (tabErr) {
+        // Execution context destroyed (page navigated) or other fatal error.
+        // Abort trap detection — no trap was found before navigation.
+        const msg = tabErr.message || '';
+        if (msg.includes('Execution context') || msg.includes('detached') ||
+            msg.includes('Target closed') || msg.includes('Session closed')) {
+          console.warn('    [keyboard-trap] Page navigated during Tab cycling — aborting detection');
+          return [];
         }
-        let selector = el.tagName.toLowerCase();
-        if (el.id) selector = '#' + el.id;
-        else if (el.className && typeof el.className === 'string' && el.className.trim()) {
-          selector += '.' + el.className.trim().split(/\s+/).slice(0, 2).join('.');
-        }
-        // Use absolute page position (not viewport-relative) to uniquely identify
-        // the element. Viewport-relative coords change as the browser auto-scrolls
-        // to focused elements, making different elements look like the same one.
-        const rect = el.getBoundingClientRect();
-        const absTop = Math.round(rect.top + window.scrollY);
-        const absLeft = Math.round(rect.left + window.scrollX);
-        const posKey = `${absTop}:${absLeft}`;
-        return {
-          selector,
-          posKey,
-          uniqueKey: selector + '@' + posKey,
-          html: el.outerHTML.substring(0, 250),
-        };
-      });
+        // For other errors, just skip this Tab iteration
+        continue;
+      }
 
       const currentKey = focusInfo?.uniqueKey || null;
 
@@ -702,25 +767,31 @@ async function detectKeyboardTraps(page) {
     // focus even with Shift+Tab. If focus moves, it's a normal page wrap.
     const verified = [];
     for (const trap of traps) {
-      await page.keyboard.down('Shift');
-      await page.keyboard.press('Tab');
-      await page.keyboard.up('Shift');
-      const afterShift = await page.evaluate(() => {
-        const el = document.activeElement;
-        if (!el || el === document.body || el === document.documentElement) return null;
-        const rect = el.getBoundingClientRect();
-        const absTop = Math.round(rect.top + window.scrollY);
-        const absLeft = Math.round(rect.left + window.scrollX);
-        let sel = el.tagName.toLowerCase();
-        if (el.id) sel = '#' + el.id;
-        else if (el.className && typeof el.className === 'string' && el.className.trim()) {
-          sel += '.' + el.className.trim().split(/\s+/).slice(0, 2).join('.');
+      try {
+        await page.keyboard.down('Shift');
+        await page.keyboard.press('Tab');
+        await page.keyboard.up('Shift');
+        const afterShift = await page.evaluate(() => {
+          const el = document.activeElement;
+          if (!el || el === document.body || el === document.documentElement) return null;
+          const rect = el.getBoundingClientRect();
+          const absTop = Math.round(rect.top + window.scrollY);
+          const absLeft = Math.round(rect.left + window.scrollX);
+          let sel = el.tagName.toLowerCase();
+          if (el.id) sel = '#' + el.id;
+          else if (el.className && typeof el.className === 'string' && el.className.trim()) {
+            sel += '.' + el.className.trim().split(/\s+/).slice(0, 2).join('.');
+          }
+          return sel + '@' + absTop + ':' + absLeft;
+        });
+        // If Shift+Tab moves focus to a different element, it's NOT a real trap
+        if (afterShift && afterShift === trap.uniqueKey) {
+          verified.push(trap);
         }
-        return sel + '@' + absTop + ':' + absLeft;
-      });
-      // If Shift+Tab moves focus to a different element, it's NOT a real trap
-      if (afterShift && afterShift === trap.uniqueKey) {
-        verified.push(trap);
+      } catch (shiftErr) {
+        // Context destroyed during verification — page navigated away.
+        // Can't verify, so don't report this trap (avoid false positive).
+        console.warn('    [keyboard-trap] Page context lost during Shift+Tab verification — skipping');
       }
     }
 
@@ -853,6 +924,7 @@ async function scanPage(browser, url, options = {}) {
   };
 
   // --- Desktop scan (with retry) ---
+  let desktopError = null;
   try {
     const desktopResult = await withRetry(
       () => scanViewport(browser, url, VIEWPORTS.desktop, tags, timeout, axeConfig, interactive)
@@ -865,10 +937,12 @@ async function scanPage(browser, url, options = {}) {
     pageResult.desktop.testEngine = desktopResult.testEngine;
     pageResult.desktop.testEnvironment = desktopResult.testEnvironment;
   } catch (err) {
+    desktopError = err.message;
     console.warn(`  Warning: Desktop scan failed for ${url}: ${err.message}`);
   }
 
   // --- Mobile scan (with retry) ---
+  let mobileError = null;
   try {
     const mobileResult = await withRetry(
       () => scanViewport(browser, url, VIEWPORTS.mobile, tags, timeout, axeConfig, interactive)
@@ -879,7 +953,13 @@ async function scanPage(browser, url, options = {}) {
     pageResult.mobile.inapplicable = mobileResult.inapplicable;
     pageResult.mobile.screenshot = mobileResult.screenshot;
   } catch (err) {
+    mobileError = err.message;
     console.warn(`  Warning: Mobile scan failed for ${url}: ${err.message}`);
+  }
+
+  // If both viewports failed, mark the page as errored
+  if (desktopError && mobileError) {
+    pageResult.error = desktopError;
   }
 
   // --- Combine results with viewport tagging ---

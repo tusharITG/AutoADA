@@ -4,11 +4,22 @@
  * HTML-level SEO checks (meta tags, headings, links, structured data, etc.).
  */
 
-const lighthouseModule = require('lighthouse');
-const lighthouse = lighthouseModule.default || lighthouseModule;
 const puppeteer = require('puppeteer-extra');
 const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 puppeteer.use(StealthPlugin());
+
+let lighthouseLoader;
+async function getLighthouse() {
+  if (!lighthouseLoader) {
+    lighthouseLoader = import('lighthouse')
+      .then((mod) => mod.default || mod)
+      .catch((err) => {
+        lighthouseLoader = null;
+        throw err;
+      });
+  }
+  return lighthouseLoader;
+}
 
 // ───────────────────────────────────────────────────
 // Lighthouse Performance Audit
@@ -17,6 +28,8 @@ puppeteer.use(StealthPlugin());
 async function runLighthouseAudit(url, opts = {}) {
   let browser;
   try {
+    const lighthouse = await getLighthouse();
+
     browser = await puppeteer.launch({
       headless: 'new',
       args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],

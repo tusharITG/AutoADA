@@ -45,6 +45,10 @@ const CONFIDENCE_WEIGHTS = {
   low: 0.15,    // High FP rate (color-contrast, etc.) — barely affects score
 };
 
+// Best-practice violations are advisory (not strict WCAG failures),
+// so they penalize the score less than WCAG-mapped violations.
+const BEST_PRACTICE_WEIGHT = 0.5;
+
 /**
  * Calculate overall compliance score (0-100).
  *
@@ -62,12 +66,14 @@ function calculateOverallScore(violations, passes) {
 
   if (violationList.length === 0 && passList.length === 0) return 100;
 
-  // Weight each violation by node count × confidence (severity is handled separately in penalty)
+  // Weight each violation by node count × confidence × best-practice factor
+  // (severity is handled separately in penalty)
   let weightedViolations = 0;
   for (const v of violationList) {
     const nodeCount = v.nodes ? v.nodes.length : 1;
     const confWeight = CONFIDENCE_WEIGHTS[v._confidence] || 0.6;
-    weightedViolations += nodeCount * confWeight;
+    const bpWeight = v._isBestPractice ? BEST_PRACTICE_WEIGHT : 1.0;
+    weightedViolations += nodeCount * confWeight * bpWeight;
   }
 
   // Weight each pass by node count
@@ -84,15 +90,16 @@ function calculateOverallScore(violations, passes) {
   const passRate = weightedPasses / totalWeighted;
   const baseScore = passRate * 100;
 
-  // Severity penalty (logarithmically scaled, confidence-weighted)
+  // Severity penalty (logarithmically scaled, confidence-weighted, best-practice-adjusted)
   let rawPenalty = 0;
   for (const v of violationList) {
     const severity = v.impact || 'minor';
     const weight = SEVERITY_WEIGHTS[severity] || 1;
     const nodeCount = v.nodes ? v.nodes.length : 1;
     const confWeight = CONFIDENCE_WEIGHTS[v._confidence] || 0.6;
+    const bpWeight = v._isBestPractice ? BEST_PRACTICE_WEIGHT : 1.0;
     // Log scale: first instance counts full, additional instances have diminishing impact
-    rawPenalty += weight * (1 + Math.log2(nodeCount)) * confWeight;
+    rawPenalty += weight * (1 + Math.log2(nodeCount)) * confWeight * bpWeight;
   }
 
   // Scale penalty relative to total weighted count (more elements checked = more tolerance)
@@ -106,13 +113,15 @@ function calculateOverallScore(violations, passes) {
  * Get severity breakdown counts.
  */
 function getSeverityBreakdown(violations) {
-  const counts = { critical: 0, serious: 0, moderate: 0, minor: 0 };
+  const counts = { critical: 0, serious: 0, moderate: 0, minor: 0, unknown: 0 };
 
   for (const v of violations) {
     for (const node of (v.nodes || [])) {
       const impact = node.impact || v.impact || 'minor';
-      if (counts.hasOwnProperty(impact)) {
+      if (impact in counts) {
         counts[impact]++;
+      } else {
+        counts.unknown++;
       }
     }
   }
@@ -305,4 +314,4 @@ function calculateScores(scanResult, industry) {
   };
 }
 
-module.exports = { calculateScores, calculateOverallScore, CONFIDENCE_WEIGHTS };
+module.exports = { calculateScores, calculateOverallScore, getPrinciple, CONFIDENCE_WEIGHTS };

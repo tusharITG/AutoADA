@@ -4,7 +4,16 @@
  */
 
 const path = require('path');
-const { calculateOverallScore } = require('../score');
+const fs = require('fs');
+const { calculateOverallScore, getPrinciple } = require('../score');
+const { escapeHtml, extractWcagCriteria, getWcagDetails, formatTarget, buildFailureSummary, safeHref } = require('./utils');
+
+// IT Geeks default logo (base64-encoded PNG)
+let DEFAULT_LOGO_BASE64 = '';
+try {
+  const logoPath = path.join(__dirname, '..', 'web', 'itgeeks-logo.png');
+  DEFAULT_LOGO_BASE64 = fs.readFileSync(logoPath).toString('base64');
+} catch { /* logo not available */ }
 
 let remediationData = {};
 try {
@@ -16,79 +25,9 @@ try {
   falsePositives = require('../data/false-positives.json');
 } catch { /* false-positives data not available */ }
 
-let wcagMap = {};
-try {
-  wcagMap = require('../data/wcag-map.json');
-} catch { /* wcag-map data not available */ }
-
 // ---------------------------------------------------------------------------
 // Helper utilities
 // ---------------------------------------------------------------------------
-
-/**
- * Escape HTML special characters to prevent XSS in generated report.
- */
-function escapeHtml(str) {
-  if (str == null) return '';
-  return String(str)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-}
-
-/**
- * Extract WCAG criteria numbers from axe-core tags.
- * Converts tags like 'wcag111' to '1.1.1', 'wcag1412' to '1.4.12'.
- */
-function extractWcagCriteria(tags) {
-  if (!tags) return '';
-  return tags
-    .filter((tag) => /^wcag\d{3,}$/.test(tag))
-    .map((tag) => {
-      const digits = tag.replace('wcag', '');
-      return `${digits[0]}.${digits[1]}.${digits.slice(2)}`;
-    })
-    .join(', ');
-}
-
-/**
- * Look up WCAG success criterion details from axe-core tags.
- * Returns array of { sc, name, level, principle, guideline, legalRelevance, description }.
- */
-function getWcagDetails(tags) {
-  if (!tags || !wcagMap || Object.keys(wcagMap).length === 0) return [];
-  const criteria = tags
-    .filter((tag) => /^wcag\d{3,}$/.test(tag))
-    .map((tag) => {
-      const digits = tag.replace('wcag', '');
-      return `${digits[0]}.${digits[1]}.${digits.slice(2)}`;
-    });
-  const details = [];
-  const seen = new Set();
-  for (const sc of criteria) {
-    if (seen.has(sc)) continue;
-    seen.add(sc);
-    const info = wcagMap[sc];
-    if (info) {
-      details.push({ sc, ...info });
-    } else {
-      details.push({ sc, name: sc, level: '?', principle: '', guideline: '', legalRelevance: '', description: '' });
-    }
-  }
-  return details;
-}
-
-/**
- * Format an axe-core target array into a readable CSS selector string.
- */
-function formatTarget(target) {
-  if (!target) return '';
-  return target
-    .map((t) => (Array.isArray(t) ? t.join(' >>> ') : t))
-    .join(' > ');
-}
 
 /**
  * Format a date string nicely.
@@ -129,68 +68,6 @@ function severityColor(severity) {
     pass: '#16a34a',
   };
   return map[severity] || '#6b7280';
-}
-
-/**
- * Build a failure summary string from axe-core node data.
- */
-function buildFailureSummary(node) {
-  if (node.failureSummary) return node.failureSummary;
-  const parts = [];
-  if (node.any && node.any.length) {
-    parts.push('Fix any of: ' + node.any.map((c) => c.message).join('; '));
-  }
-  if (node.all && node.all.length) {
-    parts.push('Fix all of: ' + node.all.map((c) => c.message).join('; '));
-  }
-  if (node.none && node.none.length) {
-    parts.push('Must not have: ' + node.none.map((c) => c.message).join('; '));
-  }
-  return parts.join(' | ');
-}
-
-/**
- * Determine WCAG principle from tags.
- */
-function getPrinciple(tags) {
-  if (!tags) return 'Robust';
-  const categoryMap = {
-    'cat.text-alternatives': 'Perceivable',
-    'cat.time-and-media': 'Perceivable',
-    'cat.adaptable': 'Perceivable',
-    'cat.distinguishable': 'Perceivable',
-    'cat.color': 'Perceivable',
-    'cat.sensory-and-visual-cues': 'Perceivable',
-    'cat.tables': 'Perceivable',
-    'cat.keyboard': 'Operable',
-    'cat.seizures': 'Operable',
-    'cat.navigation': 'Operable',
-    'cat.readable': 'Understandable',
-    'cat.predictable': 'Understandable',
-    'cat.input-assistance': 'Understandable',
-    'cat.forms': 'Understandable',
-    'cat.language': 'Understandable',
-    'cat.parsing': 'Robust',
-    'cat.compatible': 'Robust',
-    'cat.name-role-value': 'Robust',
-    'cat.structure': 'Robust',
-    'cat.semantics': 'Robust',
-    'cat.aria': 'Robust',
-  };
-  for (const tag of tags) {
-    if (categoryMap[tag]) return categoryMap[tag];
-  }
-  for (const tag of tags) {
-    const m = tag.match(/^wcag(\d)/);
-    if (m) {
-      const p = parseInt(m[1]);
-      if (p === 1) return 'Perceivable';
-      if (p === 2) return 'Operable';
-      if (p === 3) return 'Understandable';
-      if (p === 4) return 'Robust';
-    }
-  }
-  return 'Robust';
 }
 
 /**
@@ -379,6 +256,7 @@ function generateStyles(accentColor) {
     .badge-confirmed { background: #16a34a; }
     .badge-review { background: #ca8a04; }
     .badge-needs-verification { background: #9ca3af; }
+    .badge-best-practice { background: #7c3aed; }
 
     .score-disclaimer {
       background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px;
@@ -591,8 +469,15 @@ function renderCoverPage(scanResult, options) {
   const accentColor = options.clientColor || '#4295f6';
 
   let logoHtml = '';
-  if (options.clientLogoBase64) {
-    logoHtml = `<img class="client-logo" src="data:image/png;base64,${options.clientLogoBase64}" alt="${escapeHtml(clientName)} logo">`;
+  const logoBase64 = options.clientLogoBase64 || DEFAULT_LOGO_BASE64;
+  if (logoBase64) {
+    const isDefaultLogo = !options.clientLogoBase64;
+    const altText = isDefaultLogo ? 'IT Geeks logo' : `${escapeHtml(clientName)} logo`;
+    if (isDefaultLogo) {
+      logoHtml = `<div style="display:inline-block;background:#1c1917;padding:10px 16px;border-radius:8px;margin-bottom:24px"><img class="client-logo" src="data:image/png;base64,${logoBase64}" alt="${altText}" style="margin-bottom:0"></div>`;
+    } else {
+      logoHtml = `<img class="client-logo" src="data:image/png;base64,${logoBase64}" alt="${altText}">`;
+    }
   }
 
   return `
@@ -1120,12 +1005,19 @@ function renderViolationCard(violation) {
     confClass = 'badge-needs-verification';
   }
 
+  // Best practice badge (advisory, not strict WCAG failure)
+  const isBestPractice = violation._isBestPractice || false;
+  const bestPracticeBadge = isBestPractice
+    ? '<span class="badge badge-best-practice">Best Practice</span>'
+    : '';
+
   // Card heading
   let html = `
     <div class="card violation-card" data-rule="${escapeHtml(ruleId)}" id="rule-${escapeHtml(ruleId)}">
       <h4 class="card-heading">
         <span class="badge badge-${impact}">${escapeHtml(impact)}</span>
         <span class="badge ${confClass}">${confLabel}</span>
+        ${bestPracticeBadge}
         ${escapeHtml(violation.help || ruleId)}
       </h4>
 
@@ -1225,7 +1117,7 @@ function renderViolationCard(violation) {
     <div class="callout-fix">
       <strong>Recommended Fix</strong>
       ${escapeHtml(violation.help || 'Review the flagged elements and apply the appropriate remediation.')}
-      ${helpUrl ? `<br><a href="${escapeHtml(helpUrl)}" target="_blank" rel="noopener">Learn more at Deque University</a>` : ''}
+      ${helpUrl ? `<br><a href="${safeHref(helpUrl)}" target="_blank" rel="noopener">Learn more at Deque University</a>` : ''}
     </div>`;
 
   // False positive note
@@ -1536,7 +1428,7 @@ function renderManualReview(scanResult) {
         <span class="badge badge-${item.impact || 'moderate'}" style="margin-left:8px;">${escapeHtml(item.impact || 'moderate')}</span>
         <p style="margin:6px 0 0;font-size:0.9rem;">${escapeHtml(item.description || '')}
         (${nodeCount} element${nodeCount !== 1 ? 's' : ''} to review)</p>
-        ${item.helpUrl ? `<p style="margin:4px 0 0;"><a href="${escapeHtml(item.helpUrl)}" target="_blank" rel="noopener">Learn more</a></p>` : ''}
+        ${item.helpUrl ? `<p style="margin:4px 0 0;"><a href="${safeHref(item.helpUrl)}" target="_blank" rel="noopener">Learn more</a></p>` : ''}
       </div>`;
   }
 

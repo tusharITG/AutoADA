@@ -21,24 +21,46 @@ const HIGH_CONFIDENCE_RULES = new Set([
   'input-image-alt',
   'html-lang-valid',
   'valid-lang',
-  'page-has-heading-one',
   'duplicate-id',
   'duplicate-id-active',
 ]);
 
-// Rules that are known for moderate false-positive rates
-const MEDIUM_CONFIDENCE_RULES = new Set([
+// Rules tagged 'best-practice' in axe-core — used to flag violations
+// as advisory rather than strict WCAG failures.
+// Canonical list: also used to build MEDIUM_CONFIDENCE_RULES below.
+const BEST_PRACTICE_RULES = new Set([
   'heading-order',
   'region',
   'landmark-one-main',
-  'list',
-  'listitem',
-  'label',
-  'frame-title',
+  'landmark-no-duplicate-banner',
+  'landmark-no-duplicate-contentinfo',
+  'landmark-no-duplicate-main',
+  'landmark-unique',
+  'landmark-banner-is-top-level',
+  'landmark-contentinfo-is-top-level',
+  'landmark-main-is-top-level',
+  'landmark-complementary-is-top-level',
+  'page-has-heading-one',
+  'skip-link',
   'empty-heading',
   'tabindex',
-  'target-size',
+  'accesskeys',
+  'aria-allowed-role',
+  'image-redundant-alt',
+  'label-title-only',
+  'meta-refresh',
+  'scope-attr-valid',
+  'table-duplicate-name',
+  'table-fake-caption',
+  'td-has-header',
+  'no-autoplay-audio',
+  'svg-img-alt',
 ]);
+
+// Medium-confidence rules = all best-practice rules + WCAG rules with moderate FP rates.
+// Derived from BEST_PRACTICE_RULES to avoid maintaining two identical lists.
+const MEDIUM_ONLY_RULES = ['list', 'listitem', 'label', 'frame-title', 'target-size'];
+const MEDIUM_CONFIDENCE_RULES = new Set([...BEST_PRACTICE_RULES, ...MEDIUM_ONLY_RULES]);
 
 /**
  * Apply confidence scores to all violations.
@@ -67,6 +89,13 @@ function applyConfidenceScores(violations) {
       violation._confidence = 'medium';
     }
 
+    // Tag best-practice violations (advisory, not strict WCAG failures)
+    // Also check axe-core tags array for 'best-practice' in case our set is incomplete
+    if (BEST_PRACTICE_RULES.has(ruleId) ||
+        (violation.tags && violation.tags.includes('best-practice'))) {
+      violation._isBestPractice = true;
+    }
+
     // Apply contextual node-level checks (may downgrade confidence per-node)
     applyContextualChecks(violation);
   }
@@ -77,6 +106,18 @@ function applyConfidenceScores(violations) {
 // ---------------------------------------------------------------------------
 // Contextual false-positive detection (node-level)
 // ---------------------------------------------------------------------------
+
+// Shared regex for background-image/gradient detection — used by both
+// color-contrast and color-contrast-enhanced checks.
+const BG_IMAGE_REGEX = /background-image|background:\s*.*(?:url|gradient)/i;
+
+/**
+ * Check if an HTML snippet contains background-image or gradient context
+ * that makes computed contrast unreliable.
+ */
+function hasBackgroundImageContext(html) {
+  return BG_IMAGE_REGEX.test(html);
+}
 
 /**
  * Apply node-level context checks that can downgrade confidence for specific
@@ -100,7 +141,7 @@ function applyContextualChecks(violation) {
 
       case 'color-contrast':
         // background-image, gradient, or opacity patterns make contrast unreliable
-        if (/background-image|background:\s*.*(?:url|gradient)/i.test(html)) {
+        if (hasBackgroundImageContext(html)) {
           node._confidence = 'low';
           node._contextNote = 'Element has background-image or gradient — computed contrast may be inaccurate.';
         }
@@ -126,8 +167,7 @@ function applyContextualChecks(violation) {
         break;
 
       case 'color-contrast-enhanced':
-        // Same context as color-contrast
-        if (/background-image|background:\s*.*(?:url|gradient)/i.test(html)) {
+        if (hasBackgroundImageContext(html)) {
           node._confidence = 'low';
           node._contextNote = 'Element has background-image or gradient — computed contrast may be inaccurate.';
         }
@@ -155,4 +195,4 @@ function applyContextualChecks(violation) {
   }
 }
 
-module.exports = { applyConfidenceScores };
+module.exports = { applyConfidenceScores, BEST_PRACTICE_RULES };

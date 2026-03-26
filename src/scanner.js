@@ -14,9 +14,17 @@ const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 const { AxePuppeteer } = require('@axe-core/puppeteer');
 const { captureAnnotatedScreenshot } = require('./screenshotter');
 const { applyConfidenceScores } = require('./confidence');
+const { verifyContrastItems } = require('./contrast-verify');
 
 // Enable stealth mode to bypass bot detection (Cloudflare, etc.)
 puppeteer.use(StealthPlugin());
+
+// Debug logging — only outputs when AUTOADA_DEBUG=1
+function debugLog(context, msg) {
+  if (process.env.AUTOADA_DEBUG === '1') {
+    console.log(`  [debug:${context}] ${msg}`);
+  }
+}
 
 // Resource types to block during scanning (keeps scripts + stylesheets for axe-core)
 // Note: 'image' is NOT blocked — needed for meaningful screenshots.
@@ -76,6 +84,33 @@ const VIEWPORTS = {
 // Rate-limiting between page scans to avoid Cloudflare escalation
 const INTER_PAGE_DELAY_MS = { min: 1000, max: 3000 };
 const MAX_CONSECUTIVE_CF_FAILURES = 3;
+
+/** @const {number} Maximum interactive elements to expand and scan (accordions, tabs, etc.) */
+const MAX_INTERACTIVE_ELEMENTS = 10;
+
+/** @const {number} Maximum Tab key presses for keyboard trap detection */
+const MAX_TAB_PRESSES = 50;
+
+/** @const {number} Consecutive same-element focus count that indicates a keyboard trap */
+const KEYBOARD_TRAP_THRESHOLD = 3;
+
+/** @const {number} Wait time (ms) after dismissing overlays before re-scanning */
+const OVERLAY_DISMISS_WAIT_MS = 500;
+
+/** @const {number} Maximum time (ms) to wait for Cloudflare challenge resolution */
+const CHALLENGE_TIMEOUT_MS = 15000;
+
+/** @const {number} Maximum time (ms) to wait for SPA framework hydration */
+const FRAMEWORK_READY_TIMEOUT_MS = 8000;
+
+/** @const {number} Duration (ms) of no DOM mutations that signals framework stability */
+const DOM_STABILITY_WINDOW_MS = 1000;
+
+/** @const {number} Timeout (ms) for best-effort network idle wait after page load */
+const NETWORK_IDLE_TIMEOUT_MS = 5000;
+
+/** @const {number} Fallback timeout (ms) for domcontentloaded when networkidle2 fails */
+const FALLBACK_LOAD_TIMEOUT_MS = 15000;
 
 function randomDelay(min, max) {
   return min + Math.random() * (max - min);
@@ -159,7 +194,7 @@ async function loadPageDefensively(page, url, timeout = 30000) {
     try {
       await page.goto(url, {
         waitUntil: 'domcontentloaded',
-        timeout: 15000,
+        timeout: FALLBACK_LOAD_TIMEOUT_MS,
       });
     } catch (err2) {
       // Even domcontentloaded failed — flag for error page check
@@ -226,21 +261,38 @@ async function loadPageDefensively(page, url, timeout = 30000) {
   // Step 4: Wait for key content selectors (best-effort, short timeout)
   try {
     await page.waitForSelector('body:not(:empty)', { timeout: 3000 });
-  } catch {
-    // Body not empty check failed — continue anyway
+  } catch (e) {
+    debugLog('load', `body:not(:empty) wait failed: ${e.message}`);
   }
 
   try {
     await page.waitForSelector('main, #content, #main, [role="main"]', { timeout: 2000 });
-  } catch {
-    // No main content landmark — that's fine, not all pages have one
+  } catch (e) {
+    debugLog('load', `No main content landmark found: ${e.message}`);
   }
 
   // Step 5: Best-effort network idle (don't fail if it never settles)
   try {
-    await page.waitForNetworkIdle({ idleTime: 500, timeout: 5000 });
-  } catch {
-    // Network never went idle — proceed anyway (common for ecommerce/SPA sites)
+    await page.waitForNetworkIdle({ idleTime: 500, timeout: NETWORK_IDLE_TIMEOUT_MS });
+  } catch (e) {
+    debugLog('load', `Network never went idle: ${e.message}`);
+  }
+
+  // Step 6: Empty/blank page detection
+  // Pages with almost no text and very few structural elements are likely
+  // blank pages, API endpoints, or broken redirects. Flag them so reports
+  // can indicate the scan result may be unreliable.
+  try {
+    const contentCheck = await page.evaluate(() => {
+      const textLen = (document.body?.innerText || '').trim().length;
+      const structuralCount = document.querySelectorAll('main, article, section, h1, h2, h3, p, a, nav, form').length;
+      return { textLen, structuralCount };
+    });
+    if (contentCheck.textLen < 50 && contentCheck.structuralCount < 3) {
+      page._emptyContent = true;
+    }
+  } catch (e) {
+    debugLog('load', `Content check failed: ${e.message}`);
   }
 }
 
@@ -250,7 +302,7 @@ async function loadPageDefensively(page, url, timeout = 30000) {
  * the JS challenge passes. With the stealth plugin, this usually resolves
  * within 5-10 seconds.
  */
-async function waitForChallengeResolution(page, maxWaitMs = 15000) {
+async function waitForChallengeResolution(page, maxWaitMs = CHALLENGE_TIMEOUT_MS) {
   const isChallengePage = async () => {
     try {
       return await page.evaluate(() => {
@@ -261,7 +313,8 @@ async function waitForChallengeResolution(page, maxWaitMs = 15000) {
         const hasCfMeta = metaRefresh && (metaRefresh.getAttribute('content') || '').includes('cdn-cgi');
         return hasCfTitle || hasCfDom || hasCfMeta;
       });
-    } catch {
+    } catch (e) {
+      debugLog('challenge', `Challenge page check failed: ${e.message}`);
       return false;
     }
   };
@@ -280,7 +333,8 @@ async function waitForChallengeResolution(page, maxWaitMs = 15000) {
         if (body.includes('verify you are human') || body.includes('verify that you are not a robot')) return true;
         return false;
       });
-    } catch {
+    } catch (e) {
+      debugLog('challenge', `Turnstile check failed: ${e.message}`);
       return false;
     }
   };
@@ -326,7 +380,7 @@ async function waitForChallengeResolution(page, maxWaitMs = 15000) {
  * @param {import('puppeteer').Page} page
  * @param {number} maxWaitMs - Maximum wait time (default 8s)
  */
-async function waitForFrameworkReady(page, maxWaitMs = 8000) {
+async function waitForFrameworkReady(page, maxWaitMs = FRAMEWORK_READY_TIMEOUT_MS) {
   try {
     // Detect framework for logging
     const framework = await page.evaluate(() => {
@@ -346,7 +400,7 @@ async function waitForFrameworkReady(page, maxWaitMs = 8000) {
       return new Promise((resolve) => {
         let timer = null;
         let settled = false;
-        const STABILITY_WINDOW = 1000;
+        const STABILITY_WINDOW = 1000; // DOM_STABILITY_WINDOW_MS — inside browser context
 
         const observer = new MutationObserver(() => {
           if (timer) clearTimeout(timer);
@@ -380,8 +434,8 @@ async function waitForFrameworkReady(page, maxWaitMs = 8000) {
         }, maxWait);
       });
     }, maxWaitMs);
-  } catch {
-    // Fallback: fixed 2s wait
+  } catch (e) {
+    debugLog('framework', `Framework detection failed, using 2s fallback: ${e.message}`);
     await new Promise((r) => setTimeout(r, 2000));
   }
 }
@@ -422,7 +476,8 @@ async function isInOverlayContainer(page, btn) {
       }
       return false;
     }, btn);
-  } catch {
+  } catch (e) {
+    debugLog('overlay', `Overlay container check failed: ${e.message}`);
     return false;
   }
 }
@@ -454,13 +509,13 @@ async function tryDismissOverlays(page) {
         if (inOverlay) {
           await btn.click();
           dismissed = true;
-          await new Promise((r) => setTimeout(r, 500));
+          await new Promise((r) => setTimeout(r, OVERLAY_DISMISS_WAIT_MS));
           break;
         }
       }
       if (dismissed) break;
-    } catch {
-      // Selector not found or click failed — try next
+    } catch (e) {
+      debugLog('overlay', `Strategy 1 selector failed: ${e.message}`);
     }
   }
 
@@ -479,13 +534,13 @@ async function tryDismissOverlays(page) {
           if (isVisible) {
             await btn.click();
             dismissed = true;
-            await new Promise((r) => setTimeout(r, 500));
+            await new Promise((r) => setTimeout(r, OVERLAY_DISMISS_WAIT_MS));
             break;
           }
         }
         if (dismissed) break;
-      } catch {
-        // Try next
+      } catch (e) {
+        debugLog('overlay', `Strategy 2 selector failed: ${e.message}`);
       }
     }
   }
@@ -503,12 +558,12 @@ async function tryDismissOverlays(page) {
           if (isVisible) {
             await btn.click();
             dismissed = true;
-            await new Promise((r) => setTimeout(r, 500));
+            await new Promise((r) => setTimeout(r, OVERLAY_DISMISS_WAIT_MS));
             break;
           }
         }
-      } catch {
-        // Try next
+      } catch (e) {
+        debugLog('overlay', `Strategy 3 selector failed: ${e.message}`);
       }
     }
   }
@@ -549,8 +604,8 @@ async function tryDismissOverlays(page) {
       dismissed = true;
       await new Promise((r) => setTimeout(r, 300));
     }
-  } catch {
-    // DOM manipulation failed — continue
+  } catch (e) {
+    debugLog('overlay', `Strategy 4 DOM removal failed: ${e.message}`);
   }
 
   return dismissed;
@@ -637,7 +692,7 @@ function mergeViolations(withOverlays, afterDismissal) {
  * @returns {Promise<Array>} Additional violations found in expanded states
  */
 async function scanInteractiveStates(page, tags, axeConfig = {}) {
-  const MAX_INTERACTIONS = 10;
+  const MAX_INTERACTIONS = MAX_INTERACTIVE_ELEMENTS;
   const additionalViolations = [];
 
   // Selectors for collapsed/expandable elements
@@ -688,7 +743,7 @@ async function scanInteractiveStates(page, tags, axeConfig = {}) {
         if (!handle) continue;
 
         await handle.click();
-        await new Promise((r) => setTimeout(r, 500)); // Wait for animation/expansion
+        await new Promise((r) => setTimeout(r, OVERLAY_DISMISS_WAIT_MS)); // Wait for animation/expansion
 
         // Re-scan after expansion
         const results = await runAxeAnalysis(page, tags, axeConfig);
@@ -699,7 +754,8 @@ async function scanInteractiveStates(page, tags, axeConfig = {}) {
           v._expandedFrom = elem.selector;
           additionalViolations.push(v);
         }
-      } catch {
+      } catch (e) {
+        debugLog('interactive', `Failed to expand/scan element: ${e.message}`);
         // Element not clickable or scan failed — skip
       }
     }
@@ -723,8 +779,8 @@ async function scanInteractiveStates(page, tags, axeConfig = {}) {
  * @returns {Promise<Array>} Array of keyboard trap violations (axe-core format)
  */
 async function detectKeyboardTraps(page) {
-  const MAX_TABS = 50;
-  const TRAP_THRESHOLD = 3; // Same element at same position focused 3 times consecutively
+  const MAX_TABS = MAX_TAB_PRESSES;
+  const TRAP_THRESHOLD = KEYBOARD_TRAP_THRESHOLD;
 
   try {
     // Click body to reset focus to start of page
@@ -901,7 +957,7 @@ async function scanViewport(browser, url, viewport, tags, timeout, axeConfig = {
 
     // State 2: Dismiss overlays on the SAME page, then re-scan
     await tryDismissOverlays(page);
-    await new Promise((r) => setTimeout(r, 500));
+    await new Promise((r) => setTimeout(r, OVERLAY_DISMISS_WAIT_MS));
     const results2 = await runAxeAnalysis(page, tags, axeConfig);
 
     // Merge violations from both states
@@ -927,18 +983,34 @@ async function scanViewport(browser, url, viewport, tags, timeout, axeConfig = {
       screenshot = await captureAnnotatedScreenshot(page, violations);
     }
 
+    // Phase 15: Verify color-contrast incomplete items while page is still open
+    const incomplete = results2.incomplete || [];
+    const contrastIncomplete = incomplete.filter((i) => i.id === 'color-contrast');
+    let _contrastVerified = null;
+    if (contrastIncomplete.length > 0) {
+      try {
+        _contrastVerified = await verifyContrastItems(page, contrastIncomplete);
+        const nodeCount = _contrastVerified.reduce((n, v) => n + (v.nodes ? v.nodes.length : 0), 0);
+        debugLog('contrast', 'Verified ' + nodeCount + ' color-contrast elements');
+      } catch (err) {
+        debugLog('contrast', 'Contrast verification failed: ' + err.message);
+      }
+    }
+
     return {
       violations,
       passes: results2.passes || [],
-      incomplete: results2.incomplete || [],
+      incomplete,
       inapplicable: results2.inapplicable || [],
       screenshot,
       testEngine: results2.testEngine,
       testEnvironment: results2.testEnvironment,
+      _emptyContent: !!page._emptyContent,
+      _contrastVerified,
     };
   } finally {
     if (page) {
-      try { await page.close(); } catch { /* page may already be closed */ }
+      try { await page.close(); } catch (e) { debugLog('scan', `Page close failed: ${e.message}`); }
     }
   }
 }
@@ -957,7 +1029,7 @@ async function scanViewport(browser, url, viewport, tags, timeout, axeConfig = {
  */
 async function scanPage(browser, url, options = {}) {
   const {
-    tags = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'],
+    tags = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa', 'best-practice'],
     timeout = 30000,
     axeConfig = {},
     interactive = false,
@@ -983,6 +1055,7 @@ async function scanPage(browser, url, options = {}) {
     pageResult.desktop.screenshot = desktopResult.screenshot;
     pageResult.desktop.testEngine = desktopResult.testEngine;
     pageResult.desktop.testEnvironment = desktopResult.testEnvironment;
+    if (desktopResult._emptyContent) pageResult._emptyContent = true;
   } catch (err) {
     desktopError = err.message;
     console.warn(`  Warning: Desktop scan failed for ${url}: ${err.message}`);
@@ -1061,11 +1134,15 @@ function combineViewportResults(desktop, mobile) {
     if (!incompleteMap.has(i.id)) incompleteMap.set(i.id, i);
   }
 
+  // Propagate contrast verification from desktop (primary) or mobile fallback
+  const contrastVerified = desktop._contrastVerified || mobile._contrastVerified || null;
+
   return {
     violations: Array.from(combined.values()),
     passes: Array.from(passMap.values()),
     incomplete: Array.from(incompleteMap.values()),
     inapplicable: desktop.inapplicable, // Same rules apply regardless of viewport
+    _contrastVerified: contrastVerified,
   };
 }
 
@@ -1082,7 +1159,7 @@ function combineViewportResults(desktop, mobile) {
  */
 async function scanAllPages(urls, options = {}) {
   const {
-    tags = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'],
+    tags = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa', 'best-practice'],
     timeout = 30000,
     axeConfig = {},
     interactive = false,
@@ -1096,14 +1173,29 @@ async function scanAllPages(urls, options = {}) {
 
   emit({ phase: 'launching', message: 'Launching browser...' });
 
-  const browser = await puppeteer.launch({
-    headless: 'new',
-    args: [
-      '--no-sandbox',
-      '--disable-setuid-sandbox',
-      '--disable-dev-shm-usage',
-    ],
-  });
+  let browser;
+  try {
+    browser = await puppeteer.launch({
+      headless: 'new',
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+      ],
+    });
+  } catch (launchErr) {
+    const msg = launchErr.message || 'Unknown browser launch error';
+    const isPathError = msg.includes('ENOENT') || msg.includes('EACCES') || msg.includes('spawn') || msg.includes('executable');
+    const isSandboxError = msg.includes('sandbox') || msg.includes('SUID');
+    let userMessage = `Browser launch failed: ${msg}`;
+    if (isPathError) {
+      userMessage = `Browser executable not found or not accessible. Ensure Chromium is installed (npx puppeteer browsers install chrome). Error: ${msg}`;
+    } else if (isSandboxError) {
+      userMessage = `Browser sandbox error. Try running with --no-sandbox or check permissions. Error: ${msg}`;
+    }
+    emit({ phase: 'browser-error', message: userMessage });
+    throw new Error(userMessage);
+  }
 
   const pageResults = [];
   let completedCount = 0;
@@ -1143,10 +1235,15 @@ async function scanAllPages(urls, options = {}) {
         emit({ phase: 'scanning', current: globalIndex + 1, total: urls.length, url, message: `Scanning page ${globalIndex + 1}/${urls.length}: ${url}` });
 
         try {
+          const pageStartTime = Date.now();
           const result = await scanPage(browser, url, { tags, timeout, axeConfig, interactive });
+          result.loadTimeMs = Date.now() - pageStartTime;
           completedCount++;
           consecutiveCloudflareFailures = 0; // Reset on success
-          emit({ phase: 'page-done', current: completedCount, total: urls.length, url, violations: result.combined.violations.length });
+          const violationSummary = (result.combined.violations || []).map(v => ({
+            id: v.id, impact: v.impact, help: v.help, nodes: v.nodes ? v.nodes.length : 0
+          }));
+          emit({ phase: 'page-done', current: completedCount, total: urls.length, url, violations: result.combined.violations.length, violationSummary, loadTimeMs: result.loadTimeMs });
           return result;
         } catch (err) {
           console.warn(`  Error scanning ${url}: ${err.message}`);
@@ -1200,6 +1297,14 @@ async function scanAllPages(urls, options = {}) {
   // Apply confidence scoring to reduce false-positive noise
   applyConfidenceScores(allViolations);
 
+  // Aggregate contrast verification results across all pages (Phase 15)
+  const allContrastVerified = [];
+  for (const page of pageResults) {
+    if (page.combined && page.combined._contrastVerified) {
+      allContrastVerified.push(...page.combined._contrastVerified);
+    }
+  }
+
   return {
     url: urls[0],
     scannedUrls: urls,
@@ -1213,6 +1318,7 @@ async function scanAllPages(urls, options = {}) {
     allViolations,
     allPasses: aggregatePasses(pageResults),
     allIncomplete: aggregateIncomplete(pageResults),
+    allContrastVerified: allContrastVerified.length > 0 ? allContrastVerified : undefined,
   };
 }
 
@@ -1317,4 +1423,42 @@ function aggregateIncomplete(pageResults) {
   return Array.from(incMap.values());
 }
 
-module.exports = { scanPage, scanAllPages };
+/**
+ * Validate axe-core configuration object.
+ * @param {object} config - The axe config to validate
+ * @returns {{ valid: boolean, warnings: string[] }}
+ */
+function validateAxeConfig(config) {
+  const warnings = [];
+  if (!config || typeof config !== 'object') return { valid: true, warnings };
+
+  const knownKeys = ['disableRules', 'include', 'exclude', 'rules', 'runOnly', 'tags'];
+  for (const key of Object.keys(config)) {
+    if (!knownKeys.includes(key)) {
+      warnings.push(`Unknown axe-config key "${key}" — will be ignored`);
+    }
+  }
+
+  if (config.disableRules !== undefined) {
+    if (!Array.isArray(config.disableRules)) {
+      warnings.push('"disableRules" should be an array of rule ID strings');
+    } else {
+      for (const rule of config.disableRules) {
+        if (typeof rule !== 'string') {
+          warnings.push(`"disableRules" contains non-string value: ${JSON.stringify(rule)}`);
+        }
+      }
+    }
+  }
+
+  if (config.include !== undefined && !Array.isArray(config.include)) {
+    warnings.push('"include" should be an array of CSS selectors');
+  }
+  if (config.exclude !== undefined && !Array.isArray(config.exclude)) {
+    warnings.push('"exclude" should be an array of CSS selectors');
+  }
+
+  return { valid: warnings.length === 0, warnings };
+}
+
+module.exports = { scanPage, scanAllPages, validateAxeConfig };

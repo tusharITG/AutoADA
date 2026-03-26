@@ -11,7 +11,7 @@ const fs = require('fs');
 const chalk = require('chalk');
 
 const { discoverPages } = require('./crawler');
-const { scanAllPages } = require('./scanner');
+const { scanAllPages, validateAxeConfig } = require('./scanner');
 const { calculateScores } = require('./score');
 const { generateJson } = require('./reporters/json');
 const { generateCsv } = require('./reporters/csv');
@@ -116,13 +116,14 @@ async function main() {
     .option('--client-name <name>', 'Client name for report branding')
     .option('--client-logo <path>', 'Path to client logo image (PNG/SVG)')
     .option('--client-color <hex>', 'Client accent color hex code')
-    .option('-t, --tags <tags>', 'WCAG tags, comma-separated', 'wcag2a,wcag2aa,wcag21a,wcag21aa,wcag22aa')
+    .option('-t, --tags <tags>', 'WCAG tags, comma-separated', 'wcag2a,wcag2aa,wcag21a,wcag21aa,wcag22aa,best-practice')
     .option('--timeout <ms>', 'Page load timeout in milliseconds', '30000')
     .option('--max-pages <n>', 'Maximum pages to scan', '100')
     .option('--crawl', 'Enable link-based page crawling with robots.txt respect', false)
     .option('--interactive', 'Scan interactive states (accordions, tabs, details)', false)
     .option('--concurrency <n>', 'Number of pages to scan concurrently', '1')
     .option('--axe-config <path>', 'Path to axe-core config JSON (disableRules, include, exclude)')
+    .option('--no-best-practice', 'Exclude best-practice rules (strict WCAG-only mode)')
     .parse();
 
   const url = program.args[0];
@@ -142,9 +143,13 @@ async function main() {
     process.exit(1);
   }
 
-  const tags = opts.tags.split(',').map((t) => t.trim());
-  const timeout = parseInt(opts.timeout, 10);
-  const maxPages = parseInt(opts.maxPages, 10);
+  let tags = opts.tags.split(',').map((t) => t.trim());
+  // --no-best-practice removes best-practice rules for strict WCAG-only mode
+  if (opts.bestPractice === false) {
+    tags = tags.filter((t) => t !== 'best-practice');
+  }
+  const timeout = parseInt(opts.timeout, 10) || 30000;
+  const maxPages = parseInt(opts.maxPages, 10) || 100;
   const concurrency = Math.max(1, parseInt(opts.concurrency, 10) || 1);
 
   // Load optional axe-core configuration
@@ -154,6 +159,8 @@ async function main() {
       const configPath = path.resolve(opts.axeConfig);
       const raw = fs.readFileSync(configPath, 'utf-8');
       axeConfig = JSON.parse(raw);
+      const { warnings } = validateAxeConfig(axeConfig);
+      for (const w of warnings) console.warn(chalk.yellow(`  axe-config warning: ${w}`));
       console.log(`  axe-core config: ${configPath}`);
     } catch (err) {
       console.error(chalk.red(`Error reading axe-config file: ${err.message}`));

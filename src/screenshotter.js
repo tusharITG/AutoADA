@@ -8,7 +8,9 @@
  * Backward compatible: result.base64 still available as primary screenshot.
  */
 
-const MAX_REGIONS = 2;
+/** @const {number} Maximum screenshot regions to capture per viewport */
+const MAX_REGIONS = 3;
+/** @const {number} Maximum violation overlay elements to render */
 const MAX_OVERLAYS = 30;
 
 const SEVERITY_COLORS = {
@@ -46,6 +48,9 @@ async function captureAnnotatedScreenshot(page, violations) {
             color: SEVERITY_COLORS[severity] || SEVERITY_COLORS.minor,
             ruleId: violation.id,
             help: violation.help || violation.description || violation.id,
+            description: node.failureSummary || violation.description || violation.help || '',
+            confidence: node._confidence || violation._confidence || 'medium',
+            wcagCriteria: extractWcagFromTags(violation.tags),
           });
         }
         if (globalIndex >= MAX_OVERLAYS) break;
@@ -53,7 +58,7 @@ async function captureAnnotatedScreenshot(page, violations) {
       if (globalIndex >= MAX_OVERLAYS) break;
     }
 
-    // Get element positions (absolute Y) and viewport height
+    // Get element positions (absolute Y) and viewport height, with visibility checks
     const layout = await page.evaluate((elems) => {
       const viewportWidth = window.innerWidth;
       const viewportHeight = window.innerHeight;
@@ -64,6 +69,11 @@ async function captureAnnotatedScreenshot(page, violations) {
           if (!target) { positions.push(null); continue; }
           const rect = target.getBoundingClientRect();
           if (rect.width === 0 && rect.height === 0) { positions.push(null); continue; }
+          // Check visibility via computed styles
+          const style = window.getComputedStyle(target);
+          if (style.display === 'none' || style.visibility === 'hidden' || parseFloat(style.opacity) < 0.01) {
+            positions.push(null); continue;
+          }
           positions.push({
             absTop: rect.top + window.scrollY,
             absBottom: rect.bottom + window.scrollY,
@@ -83,19 +93,26 @@ async function captureAnnotatedScreenshot(page, violations) {
       };
     }, elements);
 
-    // Pair elements with their positions
+    // Pair elements with their positions, filter invisible/offscreen
     const positioned = elements
       .map((el, i) => ({ ...el, pos: layout.positions[i] }))
-      .filter((el) => el.pos !== null);
+      .filter((el) => el.pos !== null)
+      // Skip elements with zero dimensions (display:none, visibility:hidden, etc.)
+      .filter((el) => el.pos.width > 0 && el.pos.height > 0)
+      // Skip elements completely offscreen (below page or too far right)
+      .filter((el) => el.pos.absTop < layout.pageHeight && el.pos.left < layout.viewportWidth + 50);
 
-    if (positioned.length === 0) {
+    // Merge elements with >80% bounding box overlap
+    const merged = mergeOverlappingAnnotations(positioned);
+
+    if (merged.length === 0) {
       // Fallback: just take a viewport screenshot
       return await captureSingleViewport(page);
     }
 
     // Group violations into vertical regions (bins of viewport height)
     const vpH = layout.viewportHeight || 900;
-    const regions = groupIntoRegions(positioned, vpH, layout.pageHeight);
+    const regions = groupIntoRegions(merged, vpH, layout.pageHeight);
 
     // Capture each region
     const regionScreenshots = [];
@@ -266,10 +283,15 @@ async function captureRegion(page, region, vpH) {
       violationCount: region.violationCount,
       annotations: region.elements.map((el) => ({
         index: el.index,
+        selector: el.selector,
         ruleId: el.ruleId,
         severity: el.severity,
         color: el.color,
         help: el.help,
+        description: el.description,
+        confidence: el.confidence || 'medium',
+        wcagCriteria: el.wcagCriteria || '',
+        boundingBox: el.pos ? { top: el.pos.absTop, left: el.pos.left, width: el.pos.width, height: el.pos.height } : null,
       })),
     };
   } catch (err) {
@@ -309,7 +331,63 @@ async function cleanupOverlays(page) {
       document.querySelectorAll('[data-autoada-overlay], [data-autoada-marker]')
         .forEach((el) => el.remove());
     });
-  } catch { /* ignore */ }
+  } catch (e) { /* overlay cleanup failed — non-fatal */ }
+}
+
+/**
+ * Extract WCAG criteria (e.g., "1.1.1", "1.4.3") from axe-core tags array.
+ */
+function extractWcagFromTags(tags) {
+  if (!tags || !Array.isArray(tags)) return '';
+  const criteria = [];
+  for (const tag of tags) {
+    const m = tag.match(/^wcag(\d)(\d)(\d+)$/);
+    if (m) criteria.push(m[1] + '.' + m[2] + '.' + m[3]);
+  }
+  return criteria.join(', ');
+}
+
+/**
+ * Merge annotations whose bounding boxes overlap by more than 80%.
+ * Keeps the one with higher severity; drops the lower-priority duplicate.
+ */
+function mergeOverlappingAnnotations(annotations) {
+  if (annotations.length <= 1) return annotations;
+  const sevOrder = { critical: 0, serious: 1, moderate: 2, minor: 3 };
+  const result = [];
+  const merged = new Set();
+
+  for (let i = 0; i < annotations.length; i++) {
+    if (merged.has(i)) continue;
+    let kept = annotations[i];
+    for (let j = i + 1; j < annotations.length; j++) {
+      if (merged.has(j)) continue;
+      const overlap = calculateOverlap(kept.pos, annotations[j].pos);
+      if (overlap > 0.8) {
+        // Keep the higher severity one
+        if ((sevOrder[annotations[j].severity] ?? 4) < (sevOrder[kept.severity] ?? 4)) {
+          kept = annotations[j];
+        }
+        merged.add(j);
+      }
+    }
+    result.push(kept);
+  }
+  return result;
+}
+
+/**
+ * Calculate the overlap ratio between two bounding boxes.
+ * Returns 0-1, where 1 means complete overlap.
+ */
+function calculateOverlap(a, b) {
+  const xOverlap = Math.max(0, Math.min(a.left + a.width, b.left + b.width) - Math.max(a.left, b.left));
+  const yOverlap = Math.max(0, Math.min(a.absTop + a.height, b.absTop + b.height) - Math.max(a.absTop, b.absTop));
+  const overlapArea = xOverlap * yOverlap;
+  const areaA = a.width * a.height;
+  const areaB = b.width * b.height;
+  const minArea = Math.min(areaA, areaB);
+  return minArea > 0 ? overlapArea / minArea : 0;
 }
 
 /**
@@ -320,7 +398,8 @@ function formatSelector(target) {
   if (!target || target.length === 0) return null;
   // Use the last (most specific) selector in the chain
   const last = target[target.length - 1];
-  return Array.isArray(last) ? last[last.length - 1] : last;
+  const selector = Array.isArray(last) ? last[last.length - 1] : last;
+  return selector || null;
 }
 
 module.exports = { captureAnnotatedScreenshot };

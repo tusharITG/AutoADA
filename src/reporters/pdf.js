@@ -21,37 +21,44 @@ async function generatePdf(htmlContent) {
 
   try {
     const pdfPromise = (async () => {
-      const page = await browser.newPage();
+      let page;
+      try {
+        page = await browser.newPage();
 
-      await page.setContent(htmlContent, {
-        waitUntil: 'networkidle0',
-        timeout: 60000,
-      });
+        await page.setContent(htmlContent, {
+          waitUntil: 'networkidle0',
+          timeout: 60000,
+        });
 
-      // Wait for any base64 images to render
-      await new Promise((r) => setTimeout(r, 1000));
+        // Wait for any base64 images to render
+        await new Promise((r) => setTimeout(r, 1000));
 
-      const pdfBuffer = await page.pdf({
-        format: 'A4',
-        printBackground: true,
-        margin: {
-          top: '1.5cm',
-          bottom: '1.5cm',
-          left: '1cm',
-          right: '1cm',
-        },
-        displayHeaderFooter: true,
-        headerTemplate: '<div></div>',
-        footerTemplate: `
-          <div style="width: 100%; font-size: 9px; color: #999; text-align: center; padding: 0 1cm;">
-            <span>AutoADA Compliance Report</span>
-            <span style="float: right;">Page <span class="pageNumber"></span> of <span class="totalPages"></span></span>
-          </div>
-        `,
-        timeout: 60000,
-      });
+        const pdfBuffer = await page.pdf({
+          format: 'A4',
+          printBackground: true,
+          margin: {
+            top: '1.5cm',
+            bottom: '1.5cm',
+            left: '1cm',
+            right: '1cm',
+          },
+          displayHeaderFooter: true,
+          headerTemplate: '<div></div>',
+          footerTemplate: `
+            <div style="width: 100%; font-size: 9px; color: #999; text-align: center; padding: 0 1cm;">
+              <span>AutoADA Compliance Report</span>
+              <span style="float: right;">Page <span class="pageNumber"></span> of <span class="totalPages"></span></span>
+            </div>
+          `,
+          timeout: 60000,
+        });
 
-      return Buffer.from(pdfBuffer);
+        return Buffer.from(pdfBuffer);
+      } finally {
+        if (page) {
+          try { await page.close(); } catch {}
+        }
+      }
     })();
 
     const timeoutPromise = new Promise((_, reject) =>

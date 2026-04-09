@@ -421,7 +421,7 @@ async function crawlLinksWithBrowser(startUrl, maxPages, disallowedPaths = [], m
             const parsed = new URL(link);
             if (SKIP_EXTENSIONS.test(parsed.pathname)) continue;
             const norm = normalizeUrl(link);
-            if (norm && !visited.has(norm)) {
+            if (norm && !visited.has(norm) && queue.length < maxPages * 5) {
               queue.push(link);
               if (!depthMap.has(norm)) depthMap.set(norm, currentDepth + 1);
             }
@@ -507,7 +507,7 @@ async function crawlLinks(startUrl, maxPages, disallowedPaths = [], onPageFound 
           if (SKIP_EXTENSIONS.test(parsed.pathname)) continue;
 
           const norm = normalizeUrl(link);
-          if (norm && !visited.has(norm)) {
+          if (norm && !visited.has(norm) && queue.length < maxPages * 5) {
             queue.push(link);
             if (!depthMap.has(norm)) {
               depthMap.set(norm, currentDepth + 1);

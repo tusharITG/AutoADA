@@ -175,7 +175,9 @@ app.get('/api/scan/:id/progress', (req, res) => {
   scan.sseClients.push(res);
 
   // Heartbeat every 25s to prevent proxy/browser idle timeouts
-  const heartbeat = setInterval(() => { res.write(':\n\n'); }, 25000);
+  const heartbeat = setInterval(() => {
+    try { res.write(':\n\n'); } catch { clearInterval(heartbeat); scan.sseClients = scan.sseClients.filter((c) => c !== res); }
+  }, 25000);
 
   req.on('close', () => {
     clearInterval(heartbeat);
@@ -369,8 +371,16 @@ app.post('/api/scan/:id/generate-sitemap', (req, res) => {
   scan.sitemapGeneration = { status: 'crawling', pages: [], events: [], startedAt: Date.now() };
   scan.sitemapClients = scan.sitemapClients || [];
 
-  // Fire and forget — don't await
-  runSitemapGeneration(scan);
+  // Fire and forget — but catch unhandled errors to prevent process crash
+  runSitemapGeneration(scan).catch((err) => {
+    console.error(`  [sitemap] Generation failed (uncaught): ${err.message}`);
+    if (scan.sitemapGeneration) {
+      scan.sitemapGeneration.status = 'error';
+      scan.sitemapGeneration.error = err.message;
+    }
+    broadcastSitemapSSE(scan, { type: 'error', message: err.message });
+    closeSitemapSSEClients(scan);
+  });
 
   res.status(202).json({ status: 'started' });
 });
@@ -413,7 +423,9 @@ app.get('/api/scan/:id/sitemap-progress', (req, res) => {
   scan.sitemapClients.push(res);
 
   // Heartbeat every 25s to prevent proxy/browser idle timeouts
-  const heartbeat = setInterval(() => { res.write(':\n\n'); }, 25000);
+  const heartbeat = setInterval(() => {
+    try { res.write(':\n\n'); } catch { clearInterval(heartbeat); scan.sitemapClients = (scan.sitemapClients || []).filter((c) => c !== res); }
+  }, 25000);
 
   req.on('close', () => {
     clearInterval(heartbeat);
@@ -447,16 +459,29 @@ function broadcastSitemapSSE(scan, data) {
     scan.sitemapGeneration.events.shift();
   }
   const payload = `data: ${JSON.stringify(data)}\n\n`;
+  const deadClients = [];
   for (const client of (scan.sitemapClients || [])) {
-    client.write(payload);
+    try {
+      client.write(payload);
+    } catch (err) {
+      console.warn(`  [sitemap-sse] Write failed, removing dead client: ${err.message}`);
+      deadClients.push(client);
+    }
+  }
+  if (deadClients.length > 0) {
+    scan.sitemapClients = (scan.sitemapClients || []).filter((c) => !deadClients.includes(c));
   }
 }
 
 function closeSitemapSSEClients(scan) {
   for (const client of (scan.sitemapClients || [])) {
-    client.end();
+    try { client.end(); } catch {}
   }
   scan.sitemapClients = [];
+  // Free sitemap generation event buffer to reclaim memory
+  if (scan.sitemapGeneration) {
+    scan.sitemapGeneration.events = [];
+  }
 }
 
 /**
@@ -552,14 +577,17 @@ async function runScan(scanRecord) {
   let sitemapFound = false;
   let sitemapCount = 0;
   try {
-    pages = await discoverPages(url, null, options.maxPages, { enabled: options.crawl }, (data) => {
+    const discoverPromise = discoverPages(url, null, options.maxPages, { enabled: options.crawl }, (data) => {
       broadcastSSE(scanRecord, data);
       if (data.phase === 'sitemap-status') {
         sitemapFound = data.found;
         sitemapCount = data.count;
       }
     });
-  } catch {
+    const discoverTimeout = new Promise((_, reject) => setTimeout(() => reject(new Error('Page discovery timed out after 60s')), 60000));
+    pages = await Promise.race([discoverPromise, discoverTimeout]);
+  } catch (err) {
+    console.warn(`  [discover] ${err.message || 'Discovery failed'} — falling back to URL only`);
     pages = [url];
   }
   scanRecord.sitemapStatus = { found: sitemapFound, count: sitemapCount };
@@ -597,8 +625,17 @@ function broadcastSSE(scanRecord, data) {
     scanRecord.progress.shift();
   }
   const payload = `data: ${JSON.stringify(data)}\n\n`;
+  const deadClients = [];
   for (const client of scanRecord.sseClients) {
-    client.write(payload);
+    try {
+      client.write(payload);
+    } catch (err) {
+      console.warn(`  [sse] Write failed, removing dead client: ${err.message}`);
+      deadClients.push(client);
+    }
+  }
+  if (deadClients.length > 0) {
+    scanRecord.sseClients = scanRecord.sseClients.filter((c) => !deadClients.includes(c));
   }
 }
 
@@ -709,7 +746,9 @@ app.get('/api/seo-scan/:id/progress', (req, res) => {
   scan.sseClients.push(res);
 
   // Heartbeat every 25s to prevent proxy/browser idle timeouts
-  const heartbeat = setInterval(() => { res.write(':\n\n'); }, 25000);
+  const heartbeat = setInterval(() => {
+    try { res.write(':\n\n'); } catch { clearInterval(heartbeat); scan.sseClients = scan.sseClients.filter((c) => c !== res); }
+  }, 25000);
 
   req.on('close', () => {
     clearInterval(heartbeat);
@@ -796,8 +835,17 @@ function broadcastSeoSSE(scanRecord, data) {
     scanRecord.progress.shift();
   }
   const payload = `data: ${JSON.stringify(data)}\n\n`;
+  const deadClients = [];
   for (const client of scanRecord.sseClients) {
-    client.write(payload);
+    try {
+      client.write(payload);
+    } catch (err) {
+      console.warn(`  [seo-sse] Write failed, removing dead client: ${err.message}`);
+      deadClients.push(client);
+    }
+  }
+  if (deadClients.length > 0) {
+    scanRecord.sseClients = scanRecord.sseClients.filter((c) => !deadClients.includes(c));
   }
 }
 
@@ -885,6 +933,32 @@ function generateCombinedHtmlReport(adaResults, adaScores, seoData, branding) {
   // Build sorted violations for detail section
   const sortedViolations = [...violations].sort((a, b) => (sevW[b.impact] || 0) - (sevW[a.impact] || 0));
 
+  // Quick wins: moderate/minor violations with remediation that are easy to fix
+  const quickWins = sortedViolations.filter(v => {
+    const rem = remediationData[v.id];
+    return rem && (v.impact === 'moderate' || v.impact === 'minor' || v.impact === 'serious');
+  }).slice(0, 3);
+
+  // Severity emoji for non-tech readers
+  const sevEmoji = (sev) => ({ critical: '\u{1F6D1}', serious: '\u{26A0}\u{FE0F}', moderate: '\u{1F7E1}', minor: '\u{1F535}' }[sev] || '\u{2139}\u{FE0F}');
+  // Plain-language severity
+  const sevPlain = (sev) => ({
+    critical: 'Blocks users completely',
+    serious: 'Major barrier for some users',
+    moderate: 'Creates difficulty for some users',
+    minor: 'Minor inconvenience',
+  }[sev] || '');
+  // Who should fix
+  const whoFixes = (ruleId) => {
+    if (['color-contrast', 'color-contrast-enhanced'].includes(ruleId)) return 'Designer';
+    if (['image-alt', 'document-title', 'html-has-lang', 'label', 'input-image-alt', 'frame-title'].includes(ruleId)) return 'Content';
+    return 'Developer';
+  };
+
+  // Section numbering helper
+  let sectionNum = 0;
+  const nextSection = () => ++sectionNum;
+
   return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Combined ADA + SEO Compliance Report — ${esc(hostname)}</title>
 <style>
@@ -922,9 +996,20 @@ h3{font-size:16px;margin-top:24px;color:#44403c}
 .score-num{font-size:40px;font-weight:800;line-height:1}
 .score-lbl{font-size:12px;color:#78716c;margin-top:6px;text-transform:uppercase;letter-spacing:.5px}
 .score-sub{font-size:11px;margin-top:4px;font-weight:600}
+.score-bar{height:6px;border-radius:3px;background:#e5e5e5;margin-top:10px;overflow:hidden}
+.score-bar-fill{height:100%;border-radius:3px;transition:width .3s}
 
 /* Risk Badge */
-.risk-badge{display:inline-block;padding:6px 16px;border-radius:99px;font-size:13px;font-weight:700;letter-spacing:.5px;margin:16px 0}
+.risk-badge{display:inline-block;padding:6px 16px;border-radius:99px;font-size:13px;font-weight:700;letter-spacing:.5px;margin:8px 0}
+
+/* Callout boxes */
+.callout{padding:16px 20px;border-radius:8px;margin:16px 0;font-size:13px;page-break-inside:avoid}
+.callout-info{background:#eff6ff;border-left:3px solid #3b82f6}
+.callout-warn{background:#fffbeb;border-left:3px solid #d97706}
+.callout-success{background:#f0fdf4;border-left:3px solid #16a34a}
+.callout-title{font-weight:700;margin-bottom:6px;font-size:14px}
+.callout ul{margin:6px 0 0;padding-left:20px}
+.callout li{margin:4px 0}
 
 /* Tables */
 table{width:100%;border-collapse:collapse;margin:16px 0;font-size:13px}
@@ -943,13 +1028,15 @@ tr:hover td{background:#fafaf9}
 .badge-ada{background:#6c5ce722;color:#6c5ce7}
 .badge-seo{background:#2ed57322;color:#16a34a}
 .badge-both{background:#3742fa22;color:#3742fa}
-.section-badge{display:inline-block;padding:3px 10px;border-radius:99px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.3px}
+.badge-who{background:#f5f5f4;color:#44403c;font-size:10px;padding:2px 8px}
 
 /* Violation Card */
 .v-card{border:1px solid #e5e5e5;border-radius:10px;padding:20px;margin-bottom:16px;page-break-inside:avoid}
 .v-card-header{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px}
 .v-card h4{font-size:15px;margin:0;flex:1}
-.v-card-meta{font-size:12px;color:#78716c;margin-bottom:12px}
+.v-card-meta{font-size:12px;color:#78716c;margin-bottom:8px}
+.v-card-plain{font-size:13px;color:#44403c;margin:8px 0;padding:10px 14px;background:#fafaf9;border-radius:6px}
+.v-card-plain strong{color:#1c1917}
 .v-card-wcag{font-size:12px;padding:8px 12px;background:#f5f3ff;border-radius:6px;margin:8px 0;border-left:3px solid ${accentColor}}
 .v-card-nodes{font-size:12px;color:#78716c;margin-top:8px}
 .v-card-fix{margin-top:12px;padding:12px;background:#f0fdf4;border-radius:6px;border-left:3px solid #16a34a;font-size:13px}
@@ -957,11 +1044,6 @@ tr:hover td{background:#fafaf9}
 .v-code{background:#f5f5f4;padding:12px;border-radius:6px;font-size:12px;overflow-x:auto;white-space:pre-wrap;font-family:'Fira Code',monospace;margin:8px 0;border:1px solid #e5e5e5}
 .v-code.before{border-left:3px solid #dc2626;background:#fef2f2}
 .v-code.after{border-left:3px solid #16a34a;background:#f0fdf4}
-
-/* SEO Category */
-.seo-cat{margin-top:20px}
-.seo-cat h3{font-size:15px;display:flex;align-items:center;gap:8px}
-.seo-cat-count{font-size:12px;color:#78716c;font-weight:400}
 
 /* Suggestion card */
 .sug-card{border:1px solid #e5e5e5;border-radius:8px;padding:16px;margin-bottom:12px;page-break-inside:avoid}
@@ -980,20 +1062,18 @@ tr:hover td{background:#fafaf9}
 .overlap-card h4{font-size:14px;margin:0 0 4px}
 .overlap-card p{font-size:12px;color:#78716c;margin:4px 0 8px}
 
+/* Quick win */
+.qw-card{border:1px solid #16a34a44;border-radius:10px;padding:16px;margin-bottom:12px;background:#f0fdf4;page-break-inside:avoid}
+.qw-card h4{font-size:14px;margin:0 0 6px;color:#15803d}
+
 /* Footer */
 .report-footer{margin-top:60px;padding-top:20px;border-top:2px solid #e5e5e5;color:#78716c;font-size:12px}
-.report-footer-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:8px}
-.report-footer-grid dt{font-weight:600;color:#44403c}
-.report-footer-grid dd{margin:0;color:#78716c}
 
 /* Print */
 @media print{
   .cover{min-height:auto;padding:40px 0}
   body{padding:20px;font-size:12px}
-  .score-card{break-inside:avoid}
-  .v-card{break-inside:avoid}
-  .overlap-card{break-inside:avoid}
-  .sug-card{break-inside:avoid}
+  .score-card,.v-card,.overlap-card,.sug-card,.qw-card,.callout{break-inside:avoid}
   h2{break-after:avoid}
   .no-print{display:none}
 }
@@ -1002,88 +1082,157 @@ tr:hover td{background:#fafaf9}
 <!-- Cover Page -->
 <div class="cover">
   <div class="cover-logo">${logoHtml}</div>
-  <h1>COMBINED ADA + SEO<br>COMPLIANCE REPORT</h1>
-  <p class="cover-subtitle">Accessibility &amp; Search Optimization Analysis</p>
+  <h1>WEBSITE HEALTH REPORT</h1>
+  <p class="cover-subtitle">Accessibility (ADA) + Search Engine (SEO) Audit</p>
   <div class="cover-bar"></div>
   <div class="cover-meta">
     ${clientName ? `<p>Prepared for: <strong>${esc(clientName)}</strong></p>` : ''}
     <p>Website: <strong>${esc(url)}</strong></p>
     <p>Date: <strong>${dateShort}</strong></p>
-    <p>Pages Scanned: <strong>${pageCount}</strong></p>
+    <p>Pages Analyzed: <strong>${pageCount}</strong></p>
   </div>
   <div class="cover-confidential">CONFIDENTIAL</div>
 </div>
 
 <!-- Table of Contents -->
 <div class="toc">
-  <h2>Table of Contents</h2>
-  <div class="toc-item"><a href="#executive-summary">Executive Summary</a><span class="toc-num">1</span></div>
-  <div class="toc-item"><a href="#score-dashboard">Score Dashboard</a><span class="toc-num">2</span></div>
-  ${overlaps.length > 0 ? '<div class="toc-item"><a href="#overlapping-issues">Overlapping ADA + SEO Issues</a><span class="toc-num">3</span></div>' : ''}
-  <div class="toc-item"><a href="#ada-violations">ADA Accessibility Violations</a><span class="toc-num">${overlaps.length > 0 ? '4' : '3'}</span></div>
-  <div class="toc-item"><a href="#seo-issues">SEO Issues</a><span class="toc-num">${overlaps.length > 0 ? '5' : '4'}</span></div>
-  ${suggestions.length > 0 ? `<div class="toc-item"><a href="#speed-suggestions">Speed Optimization Suggestions</a><span class="toc-num">${overlaps.length > 0 ? '6' : '5'}</span></div>` : ''}
-  <div class="toc-item"><a href="#methodology">Scan Methodology &amp; Tools</a><span class="toc-num">${overlaps.length > 0 ? (suggestions.length > 0 ? '7' : '6') : (suggestions.length > 0 ? '6' : '5')}</span></div>
+  <h2>Contents</h2>
+  <div class="toc-item"><a href="#at-a-glance">At a Glance</a><span class="toc-num">1</span></div>
+  <div class="toc-item"><a href="#score-dashboard">Scores &amp; Metrics</a><span class="toc-num">2</span></div>
+  <div class="toc-item"><a href="#top-priorities">Top Priorities</a><span class="toc-num">3</span></div>
+  ${quickWins.length > 0 ? '<div class="toc-item"><a href="#quick-wins">Quick Wins</a><span class="toc-num">4</span></div>' : ''}
+  ${overlaps.length > 0 ? `<div class="toc-item"><a href="#overlapping-issues">Issues Affecting Both ADA &amp; SEO</a><span class="toc-num">${quickWins.length > 0 ? '5' : '4'}</span></div>` : ''}
+  <div class="toc-item"><a href="#ada-violations">Accessibility Issues (Detail)</a></div>
+  <div class="toc-item"><a href="#seo-issues">SEO Issues (Detail)</a></div>
+  ${suggestions.length > 0 ? '<div class="toc-item"><a href="#speed-suggestions">Speed Improvements</a></div>' : ''}
+  <div class="toc-item"><a href="#methodology">How This Scan Was Done</a></div>
 </div>
 
 <div class="content">
 
-<!-- 1. Executive Summary -->
-<h2 id="executive-summary"><span class="section-num">1</span>Executive Summary</h2>
+<!-- 1. At a Glance -->
+<h2 id="at-a-glance"><span class="section-num">${nextSection()}</span>At a Glance</h2>
 
-<div style="display:flex;align-items:center;gap:12px;margin:16px 0">
-  <span>Overall Risk Level:</span>
+<div style="display:flex;align-items:center;gap:12px;margin:12px 0">
   <span class="risk-badge" style="background:${riskColor}15;color:${riskColor};border:1px solid ${riskColor}44">${riskLevel} RISK</span>
 </div>
 
-<p>This report presents the findings of an automated accessibility (ADA/WCAG 2.2 Level AA) and SEO audit conducted on <strong>${esc(hostname)}</strong> on ${dateShort}. The scan analyzed ${pageCount} page(s) across desktop and mobile viewports.</p>
+<div class="callout callout-info">
+  <div class="callout-title">What we found on ${esc(hostname)}</div>
+  <ul>
+    <li><strong>${violations.length} accessibility issue${violations.length !== 1 ? 's' : ''}</strong> affecting ${totalNodes} element${totalNodes !== 1 ? 's' : ''} across ${pageCount} page${pageCount !== 1 ? 's' : ''}</li>
+    <li><strong>${seoIssues.length} SEO issue${seoIssues.length !== 1 ? 's' : ''}</strong> that may affect search engine ranking</li>
+    ${sevBreakdown.critical > 0 ? `<li style="color:#dc2626"><strong>${sevBreakdown.critical} critical issue${sevBreakdown.critical !== 1 ? 's' : ''}</strong> — these block some users from using the site at all</li>` : ''}
+    ${sevBreakdown.serious > 0 ? `<li style="color:#ea580c"><strong>${sevBreakdown.serious} serious issue${sevBreakdown.serious !== 1 ? 's' : ''}</strong> — major barriers for users with disabilities</li>` : ''}
+    ${overlaps.length > 0 ? `<li><strong>${overlaps.length} issue${overlaps.length !== 1 ? 's' : ''}</strong> affect both accessibility AND SEO — fixing these gives double benefit</li>` : ''}
+    ${violations.length === 0 && seoIssues.length === 0 ? '<li style="color:#16a34a">No issues found — excellent work!</li>' : ''}
+  </ul>
+</div>
 
 <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:20px 0">
-  <div style="padding:12px;background:#fafaf9;border-radius:8px;border-left:3px solid ${accentColor}">
-    <div style="font-size:12px;color:#78716c;text-transform:uppercase;letter-spacing:.5px">Confirmed Issues</div>
-    <div style="font-size:24px;font-weight:700;color:#1c1917">${confirmed.length} rules</div>
-    <div style="font-size:12px;color:#78716c">${confirmed.reduce((n, v) => n + (v.nodes?.length || 0), 0)} elements affected</div>
+  <div style="padding:14px;background:#fafaf9;border-radius:8px;border-left:3px solid ${accentColor}">
+    <div style="font-size:11px;color:#78716c;text-transform:uppercase;letter-spacing:.5px">Confirmed Issues</div>
+    <div style="font-size:28px;font-weight:700;color:#1c1917">${confirmed.length}</div>
+    <div style="font-size:12px;color:#78716c">${confirmed.reduce((n, v) => n + (v.nodes?.length || 0), 0)} elements</div>
   </div>
-  <div style="padding:12px;background:#fafaf9;border-radius:8px;border-left:3px solid #d97706">
-    <div style="font-size:12px;color:#78716c;text-transform:uppercase;letter-spacing:.5px">Needs Review</div>
-    <div style="font-size:24px;font-weight:700;color:#d97706">${needsReview.length} rules</div>
-    <div style="font-size:12px;color:#78716c">${needsReview.reduce((n, v) => n + (v.nodes?.length || 0), 0)} elements affected</div>
+  <div style="padding:14px;background:#fafaf9;border-radius:8px;border-left:3px solid #d97706">
+    <div style="font-size:11px;color:#78716c;text-transform:uppercase;letter-spacing:.5px">Needs Manual Review</div>
+    <div style="font-size:28px;font-weight:700;color:#d97706">${needsReview.length}</div>
+    <div style="font-size:12px;color:#78716c">${needsReview.reduce((n, v) => n + (v.nodes?.length || 0), 0)} elements</div>
   </div>
 </div>
-
-<h3>Priority Actions</h3>
-<ol class="priority-list">
-${allIssues.map((item, i) => `<li><span class="priority-num">${i + 1}</span><span class="badge badge-${item.severity}">${esc(item.severity)}</span><span class="badge badge-${item.source === 'ADA' ? 'ada' : 'seo'}">${item.source}</span><span>${esc(item.label)}</span>${item.nodes > 0 ? `<span style="color:#78716c;font-size:12px;margin-left:auto">${item.nodes} elements</span>` : ''}</li>`).join('\n')}
-</ol>
 
 <!-- 2. Score Dashboard -->
-<h2 id="score-dashboard"><span class="section-num">2</span>Score Dashboard</h2>
+<h2 id="score-dashboard"><span class="section-num">${nextSection()}</span>Scores &amp; Metrics</h2>
 
 <div class="scores">
-  <div class="score-card highlight" style="border-color:${scoreColor(adaScore)}"><div class="score-num" style="color:${scoreColor(adaScore)}">${adaScore}</div><div class="score-lbl">ADA Score</div><div class="score-sub" style="color:${scoreColor(adaScore)}">${scoreLabel(adaScore)}</div></div>
-  <div class="score-card highlight" style="border-color:${scoreColor(typeof seoScore === 'number' ? seoScore : null)}"><div class="score-num" style="color:${scoreColor(typeof seoScore === 'number' ? seoScore : null)}">${typeof seoScore === 'number' ? seoScore : '--'}</div><div class="score-lbl">SEO Score</div><div class="score-sub" style="color:${scoreColor(typeof seoScore === 'number' ? seoScore : null)}">${scoreLabel(typeof seoScore === 'number' ? seoScore : null)}</div></div>
-  <div class="score-card"><div class="score-num">${violations.length + seoIssues.length}</div><div class="score-lbl">Total Issues</div><div class="score-sub" style="color:#3742fa">${overlaps.length} overlapping</div></div>
-</div>
-<div class="scores" style="grid-template-columns:repeat(4,1fr)">
-  <div class="score-card"><div class="score-num" style="color:${scoreColor(perfDNum)};font-size:28px">${perfDNum ?? '--'}</div><div class="score-lbl">Desktop Perf</div></div>
-  <div class="score-card"><div class="score-num" style="color:${scoreColor(perfMNum)};font-size:28px">${perfMNum ?? '--'}</div><div class="score-lbl">Mobile Perf</div></div>
-  <div class="score-card"><div class="score-num" style="font-size:28px">${passes}</div><div class="score-lbl">Rules Passed</div></div>
-  <div class="score-card"><div class="score-num" style="font-size:28px">${totalNodes}</div><div class="score-lbl">Elements Affected</div></div>
+  <div class="score-card highlight" style="border-color:${scoreColor(adaScore)}">
+    <div class="score-num" style="color:${scoreColor(adaScore)}">${adaScore}</div>
+    <div class="score-lbl">Accessibility</div>
+    <div class="score-sub" style="color:${scoreColor(adaScore)}">${scoreLabel(adaScore)}</div>
+    <div class="score-bar"><div class="score-bar-fill" style="width:${typeof adaScore === 'number' ? adaScore : 0}%;background:${scoreColor(adaScore)}"></div></div>
+  </div>
+  <div class="score-card highlight" style="border-color:${scoreColor(typeof seoScore === 'number' ? seoScore : null)}">
+    <div class="score-num" style="color:${scoreColor(typeof seoScore === 'number' ? seoScore : null)}">${typeof seoScore === 'number' ? seoScore : '--'}</div>
+    <div class="score-lbl">SEO Health</div>
+    <div class="score-sub" style="color:${scoreColor(typeof seoScore === 'number' ? seoScore : null)}">${scoreLabel(typeof seoScore === 'number' ? seoScore : null)}</div>
+    <div class="score-bar"><div class="score-bar-fill" style="width:${typeof seoScore === 'number' ? seoScore : 0}%;background:${scoreColor(typeof seoScore === 'number' ? seoScore : null)}"></div></div>
+  </div>
+  <div class="score-card">
+    <div class="score-num">${violations.length + seoIssues.length}</div>
+    <div class="score-lbl">Total Issues</div>
+    <div class="score-sub" style="color:#3742fa">${overlaps.length} overlap both</div>
+  </div>
 </div>
 
-<h3>Severity Breakdown</h3>
+<div class="scores" style="grid-template-columns:repeat(4,1fr)">
+  <div class="score-card"><div class="score-num" style="color:${scoreColor(perfDNum)};font-size:28px">${perfDNum ?? '--'}</div><div class="score-lbl">Desktop Speed</div></div>
+  <div class="score-card"><div class="score-num" style="color:${scoreColor(perfMNum)};font-size:28px">${perfMNum ?? '--'}</div><div class="score-lbl">Mobile Speed</div></div>
+  <div class="score-card"><div class="score-num" style="font-size:28px;color:#16a34a">${passes}</div><div class="score-lbl">Checks Passed</div></div>
+  <div class="score-card"><div class="score-num" style="font-size:28px">${totalNodes}</div><div class="score-lbl">Elements to Fix</div></div>
+</div>
+
+<h3>Issue Severity Breakdown</h3>
 <table>
-<thead><tr><th>Severity</th><th>Violations</th><th>Percentage</th></tr></thead>
+<thead><tr><th style="width:30%">Severity</th><th>What it means</th><th style="width:15%">Count</th></tr></thead>
 <tbody>
-${Object.entries(sevBreakdown).filter(([, c]) => c > 0).map(([sev, count]) => `<tr><td><span class="badge badge-${sev}">${sev}</span></td><td>${count}</td><td>${violations.length > 0 ? Math.round(count / violations.length * 100) : 0}%</td></tr>`).join('\n')}
+${sevBreakdown.critical > 0 ? `<tr><td>\u{1F6D1} <span class="badge badge-critical">Critical</span></td><td>Blocks users completely — must fix first</td><td><strong>${sevBreakdown.critical}</strong></td></tr>` : ''}
+${sevBreakdown.serious > 0 ? `<tr><td>\u{26A0}\u{FE0F} <span class="badge badge-serious">Serious</span></td><td>Major barrier for users with disabilities</td><td><strong>${sevBreakdown.serious}</strong></td></tr>` : ''}
+${sevBreakdown.moderate > 0 ? `<tr><td>\u{1F7E1} <span class="badge badge-moderate">Moderate</span></td><td>Creates difficulty, should fix soon</td><td><strong>${sevBreakdown.moderate}</strong></td></tr>` : ''}
+${sevBreakdown.minor > 0 ? `<tr><td>\u{1F535} <span class="badge badge-minor">Minor</span></td><td>Small inconvenience, fix when possible</td><td><strong>${sevBreakdown.minor}</strong></td></tr>` : ''}
 ${violations.length === 0 ? '<tr><td colspan="3" style="color:#16a34a;font-weight:600;text-align:center">No violations found</td></tr>' : ''}
 </tbody>
 </table>
 
+<!-- 3. Top Priorities -->
+<h2 id="top-priorities"><span class="section-num">${nextSection()}</span>Top Priorities — Fix These First</h2>
+
+<ol class="priority-list">
+${allIssues.map((item, i) => `<li>
+  <span class="priority-num">${i + 1}</span>
+  ${sevEmoji(item.severity)} <span class="badge badge-${item.severity}">${esc(item.severity)}</span>
+  <span class="badge badge-${item.source === 'ADA' ? 'ada' : 'seo'}">${item.source}</span>
+  <span class="badge-who">${whoFixes(item.rule)}</span>
+  <span style="flex:1">${esc(item.label)}</span>
+  ${item.nodes > 0 ? `<span style="color:#78716c;font-size:12px;white-space:nowrap">${item.nodes} elements</span>` : ''}
+</li>`).join('\n')}
+</ol>
+
+${quickWins.length > 0 ? `
+<!-- 4. Quick Wins -->
+<h2 id="quick-wins"><span class="section-num">${nextSection()}</span>Quick Wins — Easy Fixes, Big Impact</h2>
+<p style="color:#78716c;font-size:13px;margin-bottom:16px">These can often be fixed in under an hour and will noticeably improve your score.</p>
+${quickWins.map(v => {
+  const rem = remediationData[v.id] || {};
+  return `<div class="qw-card">
+  <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+    <span class="badge badge-${v.impact}">${esc(v.impact)}</span>
+    <span class="badge-who">${whoFixes(v.id)}</span>
+    <span style="font-size:12px;color:#78716c">${v.nodes?.length || 0} element${(v.nodes?.length || 0) !== 1 ? 's' : ''}</span>
+  </div>
+  <h4>${esc(v.help)}</h4>
+  <ul style="font-size:13px;margin:6px 0;padding-left:20px;color:#44403c">
+    <li><strong>Problem:</strong> ${esc(v.description || v.help)}</li>
+    <li><strong>Fix:</strong> ${esc(rem.summary || rem.description || 'See detailed guidance below')}</li>
+  </ul>
+  ${rem.before && rem.after ? `<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px">
+    <div><div style="font-size:11px;color:#dc2626;font-weight:600;margin-bottom:4px">Before (broken)</div><pre class="v-code before">${esc(rem.before)}</pre></div>
+    <div><div style="font-size:11px;color:#16a34a;font-weight:600;margin-bottom:4px">After (fixed)</div><pre class="v-code after">${esc(rem.after)}</pre></div>
+  </div>` : ''}
+  </div>`;
+}).join('\n')}` : ''}
+
 ${overlaps.length > 0 ? `
-<!-- 3. Overlapping Issues -->
-<h2 id="overlapping-issues"><span class="section-num">3</span>Overlapping ADA + SEO Issues</h2>
-<p style="color:#78716c;font-size:13px;margin-bottom:16px">These issues affect both accessibility compliance and search engine ranking. Fixing them provides dual benefit.</p>
+<!-- Overlapping Issues -->
+<h2 id="overlapping-issues"><span class="section-num">${nextSection()}</span>Issues Affecting Both ADA &amp; SEO</h2>
+<div class="callout callout-info">
+  <div class="callout-title">Why these matter most</div>
+  <ul>
+    <li>These ${overlaps.length} issue${overlaps.length !== 1 ? 's' : ''} hurt both accessibility AND search rankings</li>
+    <li>Fixing them improves your site for users with disabilities AND boosts SEO</li>
+    <li>Most are straightforward content fixes</li>
+  </ul>
+</div>
 ${overlaps.map(o => {
   const v = violations.find(v2 => v2.id === o.ada);
   const rem = remediationData[o.ada] || null;
@@ -1094,20 +1243,22 @@ ${overlaps.map(o => {
     <span style="font-size:12px;color:#78716c">WCAG ${o.wcag}</span>
   </div>
   <h4>${esc(o.label)}</h4>
-  <p>${esc(o.desc)}</p>
-  ${v ? `<div style="font-size:12px;color:#78716c">${(v.nodes?.length || 0)} element(s) affected</div>` : ''}
-  ${rem ? `<div class="v-card-fix"><h5>Recommended Fix</h5><p>${esc(rem.summary || rem.description || '')}</p>
-  ${rem.before ? `<div style="font-size:11px;color:#78716c;margin-top:8px">Before:</div><pre class="v-code before">${esc(rem.before)}</pre>` : ''}
-  ${rem.after ? `<div style="font-size:11px;color:#78716c">After:</div><pre class="v-code after">${esc(rem.after)}</pre>` : ''}
+  <ul style="font-size:13px;margin:6px 0;padding-left:20px;color:#44403c">
+    <li><strong>Impact:</strong> ${esc(o.desc)}</li>
+    ${v ? `<li><strong>Found on:</strong> ${(v.nodes?.length || 0)} element${(v.nodes?.length || 0) !== 1 ? 's' : ''}</li>` : ''}
+    ${rem ? `<li><strong>Fix:</strong> ${esc(rem.summary || rem.description || '')}</li>` : ''}
+  </ul>
+  ${rem && rem.before && rem.after ? `<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px">
+    <div><div style="font-size:11px;color:#dc2626;font-weight:600;margin-bottom:4px">Before</div><pre class="v-code before">${esc(rem.before)}</pre></div>
+    <div><div style="font-size:11px;color:#16a34a;font-weight:600;margin-bottom:4px">After</div><pre class="v-code after">${esc(rem.after)}</pre></div>
   </div>` : ''}
   </div>`;
 }).join('\n')}` : ''}
 
-<!-- ADA Violations -->
-<h2 id="ada-violations"><span class="section-num">${overlaps.length > 0 ? '4' : '3'}</span>ADA Accessibility Violations (${violations.length})</h2>
+<!-- ADA Violations Detail -->
+<h2 id="ada-violations"><span class="section-num">${nextSection()}</span>Accessibility Issues — Full Detail (${violations.length})</h2>
 
-${violations.length === 0 ? '<p style="color:#16a34a;font-weight:600;font-size:15px;margin:24px 0">No accessibility violations found. Excellent!</p>' : `
-<p style="color:#78716c;font-size:13px;margin-bottom:20px">${violations.length} unique violation rule(s) affecting ${totalNodes} element(s) across ${pageCount} page(s).</p>
+${violations.length === 0 ? '<div class="callout callout-success"><div class="callout-title">No accessibility violations found</div></div>' : `
 ${sortedViolations.map(v => {
   const color = sevColor(v.impact);
   const confColor = v._confidence === 'high' ? '#16a34a' : v._confidence === 'medium' ? '#d97706' : '#6b7280';
@@ -1121,32 +1272,39 @@ ${sortedViolations.map(v => {
   const nodeCount = v.nodes?.length || 0;
   return `<div class="v-card">
   <div class="v-card-header">
-    <span class="badge badge-${v.impact}">${esc(v.impact)}</span>
+    ${sevEmoji(v.impact)} <span class="badge badge-${v.impact}">${esc(v.impact)}</span>
     <span class="badge-conf" style="background:${confColor}15;color:${confColor}">${confLabel}</span>
+    <span class="badge-who">${whoFixes(v.id)}</span>
     <h4>${esc(v.help)}</h4>
   </div>
-  <div class="v-card-meta">Rule: <code>${esc(v.id)}</code> | ${nodeCount} element(s) affected</div>
-  ${wcagDetail.length > 0 ? wcagDetail.map(w => `<div class="v-card-wcag"><strong>WCAG ${esc(w.sc)}</strong> — ${esc(w.name)} (Level ${esc(w.level)})<br><span style="font-size:11px;color:#78716c">${esc(w.guideline || '')}</span></div>`).join('') : ''}
-  ${v.description ? `<p style="font-size:13px;color:#44403c;margin:8px 0">${esc(v.description)}</p>` : ''}
-  ${nodeCount > 0 ? `<div class="v-card-nodes"><strong>Affected elements</strong> (showing up to 5):<ul style="font-size:12px;color:#78716c;margin:4px 0">${v.nodes.slice(0, 5).map(n => `<li><code style="font-size:11px;word-break:break-all">${esc(Array.isArray(n.target) ? n.target.join(' > ') : String(n.target || ''))}</code></li>`).join('')}${nodeCount > 5 ? `<li style="color:#a8a29e">...and ${nodeCount - 5} more</li>` : ''}</ul></div>` : ''}
-  ${rem ? `<div class="v-card-fix"><h5>How to Fix</h5><p style="margin:0">${esc(rem.summary || rem.description || '')}</p>
-  ${rem.effort ? `<div style="font-size:12px;color:#78716c;margin-top:6px">Estimated effort: ${esc(rem.effort)}</div>` : ''}
-  ${rem.before ? `<div style="font-size:11px;color:#78716c;margin-top:8px">Before:</div><pre class="v-code before">${esc(rem.before)}</pre>` : ''}
-  ${rem.after ? `<div style="font-size:11px;color:#78716c">After:</div><pre class="v-code after">${esc(rem.after)}</pre>` : ''}
+  <div class="v-card-meta">${nodeCount} element${nodeCount !== 1 ? 's' : ''} affected &middot; Rule: <code>${esc(v.id)}</code></div>
+  <div class="v-card-plain">
+    <strong>What's wrong:</strong> ${esc(v.description || v.help)}<br>
+    <strong>User impact:</strong> ${sevPlain(v.impact)}
+  </div>
+  ${wcagDetail.length > 0 ? wcagDetail.map(w => `<div class="v-card-wcag">WCAG ${esc(w.sc)} — ${esc(w.name)} (Level ${esc(w.level)})</div>`).join('') : ''}
+  ${nodeCount > 0 ? `<div class="v-card-nodes"><strong>Where:</strong><ul style="font-size:12px;color:#78716c;margin:4px 0;padding-left:20px">${v.nodes.slice(0, 5).map(n => `<li><code style="font-size:11px;word-break:break-all">${esc(Array.isArray(n.target) ? n.target.join(' > ') : String(n.target || ''))}</code></li>`).join('')}${nodeCount > 5 ? `<li style="color:#a8a29e">...and ${nodeCount - 5} more</li>` : ''}</ul></div>` : ''}
+  ${rem ? `<div class="v-card-fix"><h5>How to Fix</h5>
+  <ul style="margin:4px 0;padding-left:20px;font-size:13px"><li>${esc(rem.summary || rem.description || '')}</li></ul>
+  ${rem.before && rem.after ? `<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px">
+    <div><div style="font-size:11px;color:#dc2626;font-weight:600;margin-bottom:4px">Before</div><pre class="v-code before">${esc(rem.before)}</pre></div>
+    <div><div style="font-size:11px;color:#16a34a;font-weight:600;margin-bottom:4px">After</div><pre class="v-code after">${esc(rem.after)}</pre></div>
+  </div>` : ''}
   </div>` : ''}
   </div>`;
 }).join('\n')}
 `}
 
 <!-- SEO Issues -->
-<h2 id="seo-issues"><span class="section-num">${overlaps.length > 0 ? '5' : '4'}</span>SEO Issues (${seoIssues.length})</h2>
+<h2 id="seo-issues"><span class="section-num">${nextSection()}</span>SEO Issues (${seoIssues.length})</h2>
 
-${!seoData ? '<p style="color:#78716c">SEO scan was not performed.</p>' : seoIssues.length === 0 ? '<p style="color:#16a34a;font-weight:600;font-size:15px;margin:24px 0">No SEO issues found. Well optimized!</p>' : `
+${!seoData ? '<p style="color:#78716c">SEO scan was not performed.</p>' : seoIssues.length === 0 ? '<div class="callout callout-success"><div class="callout-title">No SEO issues found — well optimized!</div></div>' : `
 <table>
-<thead><tr><th>Severity</th><th>Issue</th></tr></thead>
+<thead><tr><th style="width:20%">Severity</th><th>Issue</th></tr></thead>
 <tbody>
 ${seoIssues.map(issue => {
-  return `<tr><td><span class="badge badge-${issue.severity || 'moderate'}">${esc(issue.severity || 'moderate')}</span></td><td>${esc(issue.msg || issue.message || '')}</td></tr>`;
+  const sev = issue.severity || 'moderate';
+  return `<tr><td>${sevEmoji(sev)} <span class="badge badge-${sev}">${esc(sev)}</span></td><td>${esc(issue.msg || issue.message || '')}</td></tr>`;
 }).join('\n')}
 </tbody>
 </table>
@@ -1154,44 +1312,48 @@ ${seoIssues.map(issue => {
 
 ${suggestions.length > 0 ? `
 <!-- Speed Suggestions -->
-<h2 id="speed-suggestions"><span class="section-num">${overlaps.length > 0 ? '6' : '5'}</span>Speed Optimization Suggestions (${suggestions.length})</h2>
-<p style="color:#78716c;font-size:13px;margin-bottom:16px">Performance improvements based on Lighthouse analysis.</p>
+<h2 id="speed-suggestions"><span class="section-num">${nextSection()}</span>Speed Improvements (${suggestions.length})</h2>
 ${suggestions.map(s => {
   const color = sevColor(s.severity);
   return `<div class="sug-card">
   <div style="display:flex;align-items:center;gap:8px">
     <span class="badge" style="background:${color}15;color:${color}">${esc(s.severity)}</span>
     <span style="font-size:12px;color:#78716c">${esc(s.category || '')}</span>
-    ${s.savingsMs ? `<span class="sug-savings">~${(s.savingsMs / 1000).toFixed(1)}s savings</span>` : ''}
+    ${s.savingsMs ? `<span class="sug-savings">~${(s.savingsMs / 1000).toFixed(1)}s faster</span>` : ''}
   </div>
   <h4>${esc(s.title)}</h4>
-  <p>${esc(s.fix)}</p>
+  <ul style="font-size:13px;margin:6px 0;padding-left:20px;color:#555"><li>${esc(s.fix)}</li></ul>
   ${s.code ? `<pre class="v-code">${esc(s.code)}</pre>` : ''}
   </div>`;
 }).join('\n')}` : ''}
 
 <!-- Methodology -->
-<h2 id="methodology"><span class="section-num">${overlaps.length > 0 ? (suggestions.length > 0 ? '7' : '6') : (suggestions.length > 0 ? '6' : '5')}</span>Scan Methodology &amp; Tools</h2>
+<h2 id="methodology"><span class="section-num">${nextSection()}</span>How This Scan Was Done</h2>
 
 <table>
 <tbody>
 <tr><td style="font-weight:600;width:180px">Accessibility Engine</td><td>axe-core ${esc(adaResults?.testEngine?.version || 'latest')}</td></tr>
-<tr><td style="font-weight:600">Performance Engine</td><td>Google Lighthouse</td></tr>
-<tr><td style="font-weight:600">WCAG Standard</td><td>WCAG 2.2 Level AA</td></tr>
-<tr><td style="font-weight:600">Viewports Tested</td><td>Desktop (1280x900) + Mobile (375x812)</td></tr>
-<tr><td style="font-weight:600">Pages Scanned</td><td>${pageCount}</td></tr>
-<tr><td style="font-weight:600">Scan Date</td><td>${dateShort}</td></tr>
+<tr><td style="font-weight:600">Speed Engine</td><td>Google Lighthouse</td></tr>
+<tr><td style="font-weight:600">Standard</td><td>WCAG 2.2 Level AA</td></tr>
+<tr><td style="font-weight:600">Viewports</td><td>Desktop (1280x900) + Mobile (375x812)</td></tr>
+<tr><td style="font-weight:600">Pages</td><td>${pageCount}</td></tr>
+<tr><td style="font-weight:600">Date</td><td>${dateShort}</td></tr>
 </tbody>
 </table>
 
-<div style="margin-top:20px;padding:16px;background:#fffbeb;border-radius:8px;border-left:3px solid #d97706;font-size:13px">
-<strong style="color:#d97706">Automated Scan Limitation:</strong> This automated audit covers approximately 30-40% of WCAG 2.2 success criteria. Items marked "Needs Verification" require manual testing. A complete accessibility audit should include manual keyboard navigation testing, screen reader testing, and cognitive review. This report is not a substitute for professional accessibility consultation.
+<div class="callout callout-warn">
+  <div class="callout-title">What this scan covers</div>
+  <ul>
+    <li>Automated testing catches ~30-40% of accessibility issues</li>
+    <li>Items marked "Needs Verification" require a human to check</li>
+    <li>A full audit should also include keyboard testing, screen reader testing, and cognitive review</li>
+  </ul>
 </div>
 
 </div><!-- end content -->
 
 <div class="report-footer">
-  <p>Generated by <strong>AutoADA</strong> — Combined ADA + SEO Compliance Report</p>
+  <p>Generated by <strong>AutoADA</strong> — Website Health Report</p>
   <p>${dateShort} | ${esc(hostname)}</p>
 </div>
 
@@ -1341,3 +1503,33 @@ function gracefulShutdown() {
 }
 process.on('SIGINT', gracefulShutdown);
 process.on('SIGTERM', gracefulShutdown);
+
+// Global error handlers — prevent Railway crash loops from unhandled rejections
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('  [FATAL] Unhandled Promise Rejection:', reason);
+  // Mark all running scans as errored so clients get feedback
+  for (const [, scan] of scans) {
+    if (scan.status === 'running') {
+      scan.status = 'error';
+      scan.error = 'Internal server error (unhandled rejection)';
+      scan.completedAt = Date.now();
+      try { broadcastSSE(scan, { phase: 'error', message: scan.error }); } catch {}
+      try { closeSSEClients(scan); } catch {}
+    }
+  }
+  for (const [, scan] of seoScans) {
+    if (scan.status === 'running') {
+      scan.status = 'error';
+      scan.error = 'Internal server error (unhandled rejection)';
+      scan.completedAt = Date.now();
+      try { broadcastSeoSSE(scan, { phase: 'error', message: scan.error }); } catch {}
+      try { closeSeoSSEClients(scan); } catch {}
+    }
+  }
+});
+
+process.on('uncaughtException', (err) => {
+  console.error('  [FATAL] Uncaught Exception:', err);
+  // Attempt graceful shutdown — don't let process stay in broken state
+  gracefulShutdown();
+});

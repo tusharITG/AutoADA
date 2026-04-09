@@ -1152,6 +1152,17 @@ function renderDetailedFindingsByPage(scanResult) {
 
   let html = `<h2 class="section-heading" id="detailed-findings-page">Detailed Findings by Page</h2>`;
 
+  // Determine which pages get screenshots: top 3 by violation count (homepage always included)
+  const MAX_SCREENSHOT_PAGES = 3;
+  const screenshotPageIndices = new Set();
+  if (pages.length > 0) screenshotPageIndices.add(0); // homepage always gets screenshots
+  const ranked = pages.map((p, i) => ({ i, count: (p.combined?.violations || []).reduce((n, v) => n + (v.nodes || []).length, 0) }));
+  ranked.sort((a, b) => b.count - a.count);
+  for (const entry of ranked) {
+    if (screenshotPageIndices.size >= MAX_SCREENSHOT_PAGES) break;
+    if (entry.count > 0) screenshotPageIndices.add(entry.i);
+  }
+
   // Page summary table (for multi-page scans)
   if (pages.length > 1) {
     html += `
@@ -1238,12 +1249,16 @@ function renderDetailedFindingsByPage(scanResult) {
       html += '<p style="color:#16a34a; font-weight:600;">No violations detected on this page.</p>';
     }
 
-    // Screenshots — embed desktop and mobile, with multi-region support
-    const desktopShot = page.desktop?.screenshot;
-    const mobileShot = page.mobile?.screenshot;
+    // Screenshots — only include for top 3 most important pages to keep report size manageable
+    if (screenshotPageIndices.has(pageIndex)) {
+      const desktopShot = page.desktop?.screenshot;
+      const mobileShot = page.mobile?.screenshot;
 
-    if (desktopShot || mobileShot) {
-      html += renderScreenshots(desktopShot, mobileShot, pageUrl);
+      if (desktopShot || mobileShot) {
+        html += renderScreenshots(desktopShot, mobileShot, pageUrl);
+      }
+    } else if (page.desktop?.screenshot || page.mobile?.screenshot) {
+      html += '<p style="color:#666; font-style:italic; font-size:0.85rem; margin:8px 0;">Screenshots captured but omitted from report to reduce file size. Top 3 pages with most violations include visual evidence above.</p>';
     }
   });
 
@@ -1267,28 +1282,23 @@ function renderColorContrastAnalysis(scanResult) {
   const violations = scanResult.allViolations || [];
   const contrastViolations = violations.filter((v) => v.id === 'color-contrast');
 
-  let html = `<h2 class="section-heading" id="color-contrast">Color Contrast Analysis</h2>`;
+  const parts = [`<h2 class="section-heading" id="color-contrast">Color Contrast Analysis</h2>`];
 
   if (contrastViolations.length === 0) {
-    html += '<p>No color contrast violations were detected. All tested text elements meet WCAG 2.2 Level AA contrast requirements.</p>';
-    return html;
+    parts.push('<p>No color contrast violations were detected. All tested text elements meet WCAG 2.2 Level AA contrast requirements.</p>');
+    return parts.join('\n');
   }
 
-  html += '<p>The following elements have insufficient color contrast ratios, making text difficult to read for users with low vision or color vision deficiencies.</p>';
+  parts.push('<p>The following elements have insufficient color contrast ratios, making text difficult to read for users with low vision or color vision deficiencies.</p>');
 
   for (const v of contrastViolations) {
     for (const node of (v.nodes || [])) {
       const selector = formatTarget(node.target);
 
-      // Extract color data from node.any
-      let fgColor = null;
-      let bgColor = null;
-      let contrastRatio = null;
-      let requiredRatio = null;
-      let fontSize = null;
-      let fontWeight = null;
-
-      for (const check of (node.any || [])) {
+      // Extract color data from node checks (any, all, none)
+      let fgColor = null, bgColor = null, contrastRatio = null, requiredRatio = null, fontSize = null, fontWeight = null;
+      const allChecks = [...(node.any || []), ...(node.all || []), ...(node.none || [])];
+      for (const check of allChecks) {
         if (check.data) {
           fgColor = fgColor || check.data.fgColor;
           bgColor = bgColor || check.data.bgColor;
@@ -1299,56 +1309,44 @@ function renderColorContrastAnalysis(scanResult) {
         }
       }
 
-      // Also check node.all and node.none
-      for (const check of [...(node.all || []), ...(node.none || [])]) {
-        if (check.data) {
-          fgColor = fgColor || check.data.fgColor;
-          bgColor = bgColor || check.data.bgColor;
-          contrastRatio = contrastRatio || check.data.contrastRatio;
-          requiredRatio = requiredRatio || check.data.expectedContrastRatio;
-        }
-      }
-
       const ratioDisplay = contrastRatio ? `${Number(contrastRatio).toFixed(2)}:1` : 'Unknown';
       const reqDisplay = requiredRatio ? `${requiredRatio}:1` : '4.5:1';
       const passFail = contrastRatio && requiredRatio && contrastRatio >= requiredRatio;
 
-      html += `
-        <div class="card">
+      parts.push(`<div class="card">
           <div class="element-selector"><code>${escapeHtml(selector)}</code></div>
-          <div class="swatch-pair">`;
+          <div class="swatch-pair">`);
 
       if (fgColor) {
-        html += `<div class="swatch" style="background:${escapeHtml(fgColor)}" title="Foreground: ${escapeHtml(fgColor)}"></div>
-                 <span class="swatch-label">Foreground: ${escapeHtml(fgColor)}</span>`;
+        parts.push(`<div class="swatch" style="background:${escapeHtml(fgColor)}" title="Foreground: ${escapeHtml(fgColor)}"></div>
+                 <span class="swatch-label">Foreground: ${escapeHtml(fgColor)}</span>`);
       }
-      html += '</div><div class="swatch-pair">';
+      parts.push('</div><div class="swatch-pair">');
       if (bgColor) {
-        html += `<div class="swatch" style="background:${escapeHtml(bgColor)}" title="Background: ${escapeHtml(bgColor)}"></div>
-                 <span class="swatch-label">Background: ${escapeHtml(bgColor)}</span>`;
+        parts.push(`<div class="swatch" style="background:${escapeHtml(bgColor)}" title="Background: ${escapeHtml(bgColor)}"></div>
+                 <span class="swatch-label">Background: ${escapeHtml(bgColor)}</span>`);
       }
-      html += '</div>';
+      parts.push('</div>');
 
-      html += `
-          <p>
+      parts.push(`<p>
             <strong>Contrast Ratio:</strong> ${escapeHtml(ratioDisplay)}
             &mdash; requires ${escapeHtml(reqDisplay)}
             <span class="badge ${passFail ? 'badge-pass' : 'badge-critical'}">${passFail ? 'Pass' : 'Fail'}</span>
-          </p>`;
+          </p>`);
 
       if (fontSize || fontWeight) {
-        html += `<p style="font-size:0.85rem;color:#666;">Font: ${fontSize ? escapeHtml(fontSize) : ''} ${fontWeight ? '/ weight ' + escapeHtml(String(fontWeight)) : ''}</p>`;
+        parts.push(`<p style="font-size:0.85rem;color:#666;">Font: ${fontSize ? escapeHtml(fontSize) : ''} ${fontWeight ? '/ weight ' + escapeHtml(String(fontWeight)) : ''}</p>`);
       }
 
       if (node.html) {
-        html += `<pre>${escapeHtml(node.html)}</pre>`;
+        parts.push(`<pre>${escapeHtml(node.html)}</pre>`);
       }
 
-      html += '</div>';
+      parts.push('</div>');
     }
   }
 
-  return html;
+  return parts.join('\n');
 }
 
 /**

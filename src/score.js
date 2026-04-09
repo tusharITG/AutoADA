@@ -49,16 +49,28 @@ const CONFIDENCE_WEIGHTS = {
 // so they penalize the score less than WCAG-mapped violations.
 const BEST_PRACTICE_WEIGHT = 0.5;
 
+// Minimum score deduction per rule by severity tier — guarantees critical issues
+// always have a large impact regardless of how many passes there are.
+const SEVERITY_FLOOR_PENALTY = {
+  critical: 8,
+  serious: 4,
+  moderate: 1.5,
+  minor: 0.5,
+};
+
 /**
  * Calculate overall compliance score (0-100).
  *
- * Uses a node-count-weighted approach:
- * - Base: weighted pass rate where each rule is weighted by the number of
- *   elements it affects. Violations are further weighted by severity.
- *   This prevents a single rule with 500 affected elements from being
- *   treated the same as a rule affecting 1 element.
- * - Penalty: logarithmic severity deduction to prevent a handful of
- *   repeated violations from cratering the score.
+ * Criticality-first approach:
+ * - Base score: rule-level pass/fail ratio weighted by severity. A single
+ *   critical failure weighs 10× more than a minor failure. Volume (node
+ *   count) adds diminishing marginal impact via log₂ so 20 alt-text nodes
+ *   never outweigh 1 keyboard trap.
+ * - Severity penalty: each violated rule incurs a floor penalty by tier
+ *   (critical ≥ 8 pts, serious ≥ 4 pts). Volume only adds log₂ on top.
+ *   NOT divided by totalRules — a site with 10 critical issues pays 10×
+ *   the penalty, not 1× diluted across rules.
+ * - Capped at 0 minimum, 100 maximum.
  */
 function calculateOverallScore(violations, passes) {
   const violationList = violations || [];
@@ -66,47 +78,51 @@ function calculateOverallScore(violations, passes) {
 
   if (violationList.length === 0 && passList.length === 0) return 100;
 
-  // Weight each violation by node count × confidence × best-practice factor
-  // (severity is handled separately in penalty)
+  // --- Base score: severity-weighted rule pass rate ---
+  // Each rule counts as its severity weight. Violations are further adjusted
+  // by confidence and best-practice flags. Node count is intentionally NOT
+  // used in the base score — severity of the rule type matters, not volume.
   let weightedViolations = 0;
   for (const v of violationList) {
-    const nodeCount = v.nodes ? v.nodes.length : 1;
+    const severity = v.impact || 'minor';
+    const sevWeight = SEVERITY_WEIGHTS[severity] || 1;
     const confWeight = CONFIDENCE_WEIGHTS[v._confidence] || 0.6;
     const bpWeight = v._isBestPractice ? BEST_PRACTICE_WEIGHT : 1.0;
-    weightedViolations += nodeCount * confWeight * bpWeight;
+    weightedViolations += sevWeight * confWeight * bpWeight;
   }
 
-  // Weight each pass by node count
-  let weightedPasses = 0;
-  for (const p of passList) {
-    const nodeCount = p.nodes ? p.nodes.length : 1;
-    weightedPasses += nodeCount;
-  }
+  // Passes are weighted uniformly at 1 per rule (severity only matters for failures)
+  const weightedPasses = passList.length;
 
   const totalWeighted = weightedViolations + weightedPasses;
   if (totalWeighted === 0) return 100;
 
-  // Base score from weighted pass rate
   const passRate = weightedPasses / totalWeighted;
   const baseScore = passRate * 100;
 
-  // Severity penalty (logarithmically scaled, confidence-weighted, best-practice-adjusted)
-  let rawPenalty = 0;
+  // --- Severity penalty: floor penalty per rule + volume bonus via log₂ ---
+  // Each violated rule gets at minimum its floor penalty (critical=8, serious=4, etc.)
+  // Volume of affected nodes adds a small log₂ bonus on top — so 100 affected
+  // elements hurts slightly more than 1, but the severity tier dominates.
+  let totalPenalty = 0;
   for (const v of violationList) {
     const severity = v.impact || 'minor';
-    const weight = SEVERITY_WEIGHTS[severity] || 1;
     const nodeCount = v.nodes ? v.nodes.length : 1;
     const confWeight = CONFIDENCE_WEIGHTS[v._confidence] || 0.6;
     const bpWeight = v._isBestPractice ? BEST_PRACTICE_WEIGHT : 1.0;
-    // Log scale: first instance counts full, additional instances have diminishing impact
-    rawPenalty += weight * (1 + Math.log2(nodeCount)) * confWeight * bpWeight;
+
+    // Floor penalty: guaranteed deduction per rule by severity tier
+    const floor = SEVERITY_FLOOR_PENALTY[severity] || 0.5;
+    // Volume bonus: diminishing marginal impact of additional affected nodes
+    const volumeBonus = nodeCount > 1 ? Math.log2(nodeCount) * 0.5 : 0;
+
+    totalPenalty += (floor + volumeBonus) * confWeight * bpWeight;
   }
 
-  // Scale penalty relative to total weighted count (more elements checked = more tolerance)
-  const totalRules = violationList.length + passList.length;
-  const scaledPenalty = Math.min(baseScore, (rawPenalty / Math.max(totalRules, 1)) * 25);
+  // Cap total penalty at baseScore (can't go below 0)
+  const cappedPenalty = Math.min(baseScore, totalPenalty);
 
-  return Math.max(0, Math.min(100, Math.round(baseScore - scaledPenalty)));
+  return Math.max(0, Math.min(100, Math.round(baseScore - cappedPenalty)));
 }
 
 /**

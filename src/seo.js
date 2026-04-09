@@ -58,7 +58,12 @@ async function runLighthouseAudit(url, opts = {}) {
       logLevel: 'error',
     };
 
-    const result = await lighthouse(url, flags, lhConfig);
+    const LH_TIMEOUT_MS = 90000; // 90s hard timeout for Lighthouse
+    const lhPromise = lighthouse(url, flags, lhConfig);
+    const lhTimeout = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error(`Lighthouse audit timed out after ${LH_TIMEOUT_MS / 1000}s`)), LH_TIMEOUT_MS)
+    );
+    const result = await Promise.race([lhPromise, lhTimeout]);
     const lhr = result.lhr;
 
     // Extract core web vitals + performance metrics

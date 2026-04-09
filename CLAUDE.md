@@ -646,3 +646,63 @@ VERIFICATION (E2E)           → Phase 17:    Real-site testing
 - **Testing**: mergerecords.com — HTTP crawl found 1 page → SPA fallback → browser crawl found **200 pages** (store categories, artists, products, bundles) → XML sitemap 35,967 bytes. Crawl completed in ~3 minutes. All tests pass.
 
 ### ALL 17 PHASES COMPLETE + POST-PHASE ENHANCEMENTS
+
+---
+
+## WhatsApp Integration Plan (Pending Implementation)
+
+> **Plan file**: `/Users/tushartomar/.claude/plans/cozy-foraging-puffin.md`
+> **Branch**: `feature/whatsapp-integration`
+> **Status**: PLANNED — awaiting user prompt to begin implementation
+
+### Overview
+WhatsApp bot integration using WhatsApp Business Cloud API (Meta, free tier). Team of 2-3 at IT Geeks sends a URL via WhatsApp DM, picks scan type (ADA/SEO/Both), receives executive summary text + IT Geeks branded PDF report.
+
+### Architecture: Plain Express routes added to existing server (NOT Next.js)
+- `src/services/scan-service.js` — Headless scan service wrapping existing scanAllPages/calculateScores/generatePdf
+- `src/lib/whatsapp-client.js` — WhatsApp Cloud API v21.0 client (sendText, sendDocument, parseMessage)
+- `src/routes/whatsapp.js` — Express Router with GET (webhook verify) + POST (incoming messages)
+- `src/server.js` — +8 lines to mount router with raw body middleware
+
+### User Requirements
+- **Scan type**: Menu after URL ("1. ADA  2. SEO  3. Both")
+- **Pages**: Up to 5 per scan
+- **Summary**: Executive style — Score + risk level (HIGH/MEDIUM/LOW) + one-line recommendation
+- **PDF**: Auto-send for <=5 pages, IT Geeks branded
+- **Business hours**: 2 PM – 12 AM IST (queue off-hours messages, process at 2 PM)
+- **Rate limit**: 3 scans/person/hour
+- **Access**: Allowed phone numbers only (env var)
+- **DMs only**: Ignore group chats
+- **Follow-up commands**: Only "help"
+- **Tone**: Professional
+
+### Key Mitigations (13 researched problems)
+1. **Duplicate webhooks** → messageId dedup with 5-min TTL
+2. **5-second webhook timeout** → respond 200 FIRST, process async via setImmediate()
+3. **express.json() breaks HMAC** → raw body middleware on webhook route only
+4. **Token expiration** → Document: use System User permanent token, validate on startup
+5. **FormData upload bug** → Use `form-data` npm package (not native FormData)
+6. **PDF too large** → Cap 5 pages, strip screenshots for WhatsApp PDFs
+7. **Queue lost on redeploy** → Accept for v1, SIGTERM handler, log lost items
+8. **Puppeteer OOM on Railway** → Memory check before scan, reduce MAX_CONCURRENT_SCANS to 2
+9. **Message ordering** → Combine menu into single message
+10. **Cloudflare blocks** → Include specific error reason in failure message
+11. **24-hour window** → Queue TTL 20 hours, discard expired
+12. **Pricing** → FREE (reply-only within 24h window)
+13. **Railway deployment** → nixpacks.toml for Chrome deps, disable Serverless, auto HTTPS
+
+### Execution Order (Ralphy)
+1. Create branch
+2. nixpacks.toml
+3. Phase 1: scan-service.js + test
+4. Phase 2: whatsapp-client.js + test (install form-data)
+5. Phase 3: routes/whatsapp.js + server.js wiring + test
+6. Phase 4: Security (rate limit, allowed numbers, hours, signature, dedup)
+7. Phase 5: .env.example
+8. Phase 6: Full test suite + regression
+9. Update CLAUDE.md changelog
+
+### Files (zero changes to existing scan/reporter/UI code)
+- CREATE: `src/services/scan-service.js`, `src/lib/whatsapp-client.js`, `src/routes/whatsapp.js`, `.env.example`, `nixpacks.toml`
+- CREATE: `__tests__/unit/scan-service.test.js`, `__tests__/unit/whatsapp-client.test.js`, `__tests__/smoke/whatsapp.test.js`
+- MODIFY: `src/server.js` (+8 lines), `package.json` (+form-data dep)

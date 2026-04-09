@@ -354,17 +354,25 @@ async function waitForChallengeResolution(page, maxWaitMs = CHALLENGE_TIMEOUT_MS
   while (Date.now() - start < maxWaitMs) {
     await new Promise((r) => setTimeout(r, 2000));
 
-    if (!(await isChallengePage())) {
-      const elapsed = ((Date.now() - start) / 1000).toFixed(1);
-      console.log(`    [cloudflare] Challenge resolved in ${elapsed}s`);
-      await new Promise((r) => setTimeout(r, 1000));
-      return { resolved: true, escalated: false, type: 'js-challenge' };
-    }
+    try {
+      if (!(await isChallengePage())) {
+        const elapsed = ((Date.now() - start) / 1000).toFixed(1);
+        console.log(`    [cloudflare] Challenge resolved in ${elapsed}s`);
+        await new Promise((r) => setTimeout(r, 1000));
+        return { resolved: true, escalated: false, type: 'js-challenge' };
+      }
 
-    // Re-check for escalation during wait
-    if (await isTurnstilePage()) {
-      console.warn('    [cloudflare] Escalated to interactive Turnstile during wait');
-      return { resolved: false, escalated: true, type: 'turnstile' };
+      // Re-check for escalation during wait
+      if (await isTurnstilePage()) {
+        console.warn('    [cloudflare] Escalated to interactive Turnstile during wait');
+        return { resolved: false, escalated: true, type: 'turnstile' };
+      }
+    } catch (err) {
+      debugLog('cloudflare', `Challenge check failed: ${err.message}`);
+      // If page context was destroyed, challenge likely resolved via navigation
+      if (err.message && (err.message.includes('Execution context') || err.message.includes('detached'))) {
+        return { resolved: true, escalated: false, type: 'navigation' };
+      }
     }
   }
 
@@ -396,7 +404,10 @@ async function waitForFrameworkReady(page, maxWaitMs = FRAMEWORK_READY_TIMEOUT_M
     }
 
     // Wait for DOM stability: resolve when no mutations for 1 second
-    await page.evaluate((maxWait) => {
+    // Wrap in Promise.race to prevent page.evaluate() from hanging if page JS freezes
+    await Promise.race([
+      new Promise((r) => setTimeout(r, maxWaitMs + 2000)), // hard outer timeout
+      page.evaluate((maxWait) => {
       return new Promise((resolve) => {
         let timer = null;
         let settled = false;
@@ -433,7 +444,8 @@ async function waitForFrameworkReady(page, maxWaitMs = FRAMEWORK_READY_TIMEOUT_M
           }
         }, maxWait);
       });
-    }, maxWaitMs);
+    }, maxWaitMs),
+    ]);
   } catch (e) {
     debugLog('framework', `Framework detection failed, using 2s fallback: ${e.message}`);
     await new Promise((r) => setTimeout(r, 2000));
@@ -939,7 +951,7 @@ async function detectKeyboardTraps(page) {
  * @param {boolean} [interactive=false] - Scan interactive states
  * @returns {Promise<object>} viewport scan result
  */
-async function scanViewport(browser, url, viewport, tags, timeout, axeConfig = {}, interactive = false) {
+async function scanViewport(browser, url, viewport, tags, timeout, axeConfig = {}, interactive = false, skipScreenshot = false) {
   // Use default browser context (NOT isolated) so Cloudflare clearance cookies persist
   // across pages on the same domain — prevents re-triggering challenges on every page.
   let page;
@@ -978,8 +990,9 @@ async function scanViewport(browser, url, viewport, tags, timeout, axeConfig = {
     }
 
     // Capture screenshot after dismissal (more useful — shows the real page)
+    // Skip screenshots for pages beyond the limit to save memory on large scans
     let screenshot = null;
-    if (violations.length > 0) {
+    if (violations.length > 0 && !skipScreenshot) {
       screenshot = await captureAnnotatedScreenshot(page, violations);
     }
 
@@ -1027,65 +1040,87 @@ async function scanViewport(browser, url, viewport, tags, timeout, axeConfig = {
  * @param {object} options
  * @returns {Promise<object>} Per-page scan result
  */
+/** Overall timeout for a single page scan (desktop + mobile) — prevents indefinite hangs */
+const SCAN_PAGE_TIMEOUT_MS = 120000; // 2 minutes
+
 async function scanPage(browser, url, options = {}) {
   const {
     tags = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa', 'best-practice'],
     timeout = 30000,
     axeConfig = {},
     interactive = false,
+    skipScreenshot = false,
   } = options;
 
-  const pageResult = {
+  const emptyResult = {
     url,
+    error: null,
     desktop: { violations: [], passes: [], incomplete: [], inapplicable: [], screenshot: null },
     mobile: { violations: [], passes: [], incomplete: [], inapplicable: [], screenshot: null },
     combined: { violations: [], passes: [], incomplete: [], inapplicable: [] },
   };
 
-  // --- Desktop scan (with retry) ---
-  let desktopError = null;
+  // Wrap entire page scan in overall timeout to prevent indefinite hangs
+  const scanPromise = (async () => {
+    const pageResult = { ...emptyResult, error: null };
+
+    // --- Desktop scan (with retry) ---
+    let desktopError = null;
+    try {
+      const desktopResult = await withRetry(
+        () => scanViewport(browser, url, VIEWPORTS.desktop, tags, timeout, axeConfig, interactive, skipScreenshot)
+      );
+      pageResult.desktop.violations = desktopResult.violations;
+      pageResult.desktop.passes = desktopResult.passes;
+      pageResult.desktop.incomplete = desktopResult.incomplete;
+      pageResult.desktop.inapplicable = desktopResult.inapplicable;
+      pageResult.desktop.screenshot = desktopResult.screenshot;
+      pageResult.desktop.testEngine = desktopResult.testEngine;
+      pageResult.desktop.testEnvironment = desktopResult.testEnvironment;
+      if (desktopResult._emptyContent) pageResult._emptyContent = true;
+    } catch (err) {
+      desktopError = err.message;
+      console.warn(`  Warning: Desktop scan failed for ${url}: ${err.message}`);
+    }
+
+    // --- Mobile scan (with retry) ---
+    let mobileError = null;
+    try {
+      const mobileResult = await withRetry(
+        () => scanViewport(browser, url, VIEWPORTS.mobile, tags, timeout, axeConfig, interactive, skipScreenshot)
+      );
+      pageResult.mobile.violations = mobileResult.violations;
+      pageResult.mobile.passes = mobileResult.passes;
+      pageResult.mobile.incomplete = mobileResult.incomplete;
+      pageResult.mobile.inapplicable = mobileResult.inapplicable;
+      pageResult.mobile.screenshot = mobileResult.screenshot;
+    } catch (err) {
+      mobileError = err.message;
+      console.warn(`  Warning: Mobile scan failed for ${url}: ${err.message}`);
+    }
+
+    // If both viewports failed, mark the page as errored
+    if (desktopError && mobileError) {
+      pageResult.error = desktopError;
+    }
+
+    // --- Combine results with viewport tagging ---
+    pageResult.combined = combineViewportResults(pageResult.desktop, pageResult.mobile);
+
+    return pageResult;
+  })();
+
+  const timeoutPromise = new Promise((_, reject) =>
+    setTimeout(() => reject(new Error(`Page scan timed out after ${SCAN_PAGE_TIMEOUT_MS / 1000}s`)), SCAN_PAGE_TIMEOUT_MS)
+  );
+
   try {
-    const desktopResult = await withRetry(
-      () => scanViewport(browser, url, VIEWPORTS.desktop, tags, timeout, axeConfig, interactive)
-    );
-    pageResult.desktop.violations = desktopResult.violations;
-    pageResult.desktop.passes = desktopResult.passes;
-    pageResult.desktop.incomplete = desktopResult.incomplete;
-    pageResult.desktop.inapplicable = desktopResult.inapplicable;
-    pageResult.desktop.screenshot = desktopResult.screenshot;
-    pageResult.desktop.testEngine = desktopResult.testEngine;
-    pageResult.desktop.testEnvironment = desktopResult.testEnvironment;
-    if (desktopResult._emptyContent) pageResult._emptyContent = true;
+    return await Promise.race([scanPromise, timeoutPromise]);
   } catch (err) {
-    desktopError = err.message;
-    console.warn(`  Warning: Desktop scan failed for ${url}: ${err.message}`);
+    console.warn(`  Warning: Page scan timed out for ${url}: ${err.message}`);
+    emptyResult.error = err.message;
+    return emptyResult;
   }
-
-  // --- Mobile scan (with retry) ---
-  let mobileError = null;
-  try {
-    const mobileResult = await withRetry(
-      () => scanViewport(browser, url, VIEWPORTS.mobile, tags, timeout, axeConfig, interactive)
-    );
-    pageResult.mobile.violations = mobileResult.violations;
-    pageResult.mobile.passes = mobileResult.passes;
-    pageResult.mobile.incomplete = mobileResult.incomplete;
-    pageResult.mobile.inapplicable = mobileResult.inapplicable;
-    pageResult.mobile.screenshot = mobileResult.screenshot;
-  } catch (err) {
-    mobileError = err.message;
-    console.warn(`  Warning: Mobile scan failed for ${url}: ${err.message}`);
-  }
-
-  // If both viewports failed, mark the page as errored
-  if (desktopError && mobileError) {
-    pageResult.error = desktopError;
-  }
-
-  // --- Combine results with viewport tagging ---
-  pageResult.combined = combineViewportResults(pageResult.desktop, pageResult.mobile);
-
-  return pageResult;
 }
 
 // ---------------------------------------------------------------------------
@@ -1165,6 +1200,7 @@ async function scanAllPages(urls, options = {}) {
     interactive = false,
     concurrency = 1,
     onProgress = null,
+    maxScreenshotPages = Infinity,
   } = options;
 
   const emit = (data) => {
@@ -1236,7 +1272,8 @@ async function scanAllPages(urls, options = {}) {
 
         try {
           const pageStartTime = Date.now();
-          const result = await scanPage(browser, url, { tags, timeout, axeConfig, interactive });
+          const skipScreenshot = globalIndex >= maxScreenshotPages;
+          const result = await scanPage(browser, url, { tags, timeout, axeConfig, interactive, skipScreenshot });
           result.loadTimeMs = Date.now() - pageStartTime;
           completedCount++;
           consecutiveCloudflareFailures = 0; // Reset on success
